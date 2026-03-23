@@ -827,7 +827,8 @@ class ReaderUI:
             curses.use_default_colors()
             curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_BLACK)
             curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_WHITE)
-            # Reverse video colors (for popups)
+            curses.init_pair(3, curses.COLOR_YELLOW, -1)  # Titles (yellow on default)
+            # Popup colors
             curses.init_pair(6, curses.COLOR_WHITE, curses.COLOR_BLUE)  # Info popup (white on blue)
             curses.init_pair(7, curses.COLOR_WHITE, curses.COLOR_RED)   # Error popup (white on red)
             self.has_colors = True
@@ -934,15 +935,12 @@ class ReaderUI:
             self.stdscr.addnstr(start_y + popup_height - 1, start_x, "+" + "-" * (popup_width - 2) + "+", popup_width)
             self.stdscr.attroff(popup_attr)
             
-            # Draw title (centered, bold on popup background)
-            title_line = title.center(popup_width - 2)
-            title_x = start_x + 1
-            # Fill with popup background first
-            self.stdscr.attron(popup_attr)
-            self.stdscr.addnstr(start_y + 1, title_x, " " * (popup_width - 2), popup_width - 2)
-            # Then draw title text on top
+            # Draw title (centered, yellow bold like termgpt)
+            title_line = " " + title + " "
+            title_x = start_x + (popup_width - len(title_line)) // 2
+            self.stdscr.attron(curses.color_pair(3) | curses.A_BOLD)
             self.stdscr.addnstr(start_y + 1, title_x, title_line[:popup_width - 2], popup_width - 2)
-            self.stdscr.attroff(popup_attr)
+            self.stdscr.attroff(curses.color_pair(3) | curses.A_BOLD)
             
             # Draw message with popup background
             msg_start_y = start_y + 2
@@ -976,6 +974,9 @@ class ReaderUI:
         curses.curs_set(0)
         self.stdscr.keypad(True)
         self.setup_colors()
+        # Draw initial screen before waiting for input
+        self._ensure_page_in_range()
+        self.draw()
         while self.running:
             self._ensure_page_in_range()
             self.draw()
