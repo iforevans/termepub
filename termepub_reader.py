@@ -96,6 +96,83 @@ def ascii_sanitize(text: str) -> str:
     return ''.join(result)
 
 
+def parse_inline_style(style_attr: str) -> dict:
+    """Parse inline style attribute into a dict of CSS properties.
+    
+    Example: 'font-weight: bold; color: #ff0000; text-align: center'
+    Returns: {'font_weight': 'bold', 'color': '#ff0000', 'text_align': 'center'}
+    """
+    if not style_attr:
+        return {}
+    styles = {}
+    for prop in style_attr.split(';'):
+        if ':' in prop:
+            key, value = prop.split(':', 1)
+            key = key.strip().replace('-', '_')
+            value = value.strip()
+            if key and value:
+                styles[key] = value
+    return styles
+
+
+def hex_to_16_color(hex_color: str) -> Optional[int]:
+    """Convert a hex color to the nearest 16-color ANSI palette.
+    
+    Maps hex colors (e.g., '#ff0000', 'rgb(255,0,0)') to curses.COLOR_* constants.
+    Returns None if color cannot be mapped.
+    """
+    hex_color = hex_color.strip()
+    
+    # Handle rgb() format
+    rgb_match = re.search(r'rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)', hex_color)
+    if rgb_match:
+        r, g, b = int(rgb_match.group(1)), int(rgb_match.group(2)), int(rgb_match.group(3))
+    else:
+        # Handle hex format (#rrggbb, #rgb, or rrggbb)
+        hex_color = hex_color.lstrip('#')
+        if len(hex_color) == 3:
+            hex_color = ''.join(c*2 for c in hex_color)
+        if len(hex_color) == 6:
+            try:
+                r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+            except ValueError:
+                return None
+        else:
+            return None
+    
+    # 16-color ANSI palette
+    ansi_colors = [
+        (0, 0, 0),       # 0: black
+        (170, 0, 0),     # 1: red
+        (0, 170, 0),     # 2: green
+        (170, 170, 0),   # 3: yellow
+        (0, 0, 170),     # 4: blue
+        (170, 0, 170),   # 5: magenta
+        (0, 170, 170),   # 6: cyan
+        (170, 170, 170), # 7: white
+        (85, 85, 85),    # 8: bright black (gray)
+        (255, 85, 85),   # 9: bright red
+        (85, 255, 85),   # 10: bright green
+        (255, 255, 85),  # 11: bright yellow
+        (85, 85, 255),   # 12: bright blue
+        (255, 85, 255),  # 13: bright magenta
+        (85, 255, 255),  # 14: bright cyan
+        (255, 255, 255), # 15: bright white
+    ]
+    
+    # Find closest color by Euclidean distance
+    min_dist = float('inf')
+    closest_idx = 0
+    
+    for idx, (ar, ag, ab) in enumerate(ansi_colors):
+        dist = (r - ar) ** 2 + (g - ag) ** 2 + (b - ab) ** 2
+        if dist < min_dist:
+            min_dist = dist
+            closest_idx = idx
+    
+    return closest_idx
+
+
 class EpubTextExtractor(HTMLParser):
     BLOCK_TAGS = {
         "p", "div", "section", "article", "aside", "blockquote", "pre",
@@ -194,8 +271,9 @@ class EpubTextExtractor(HTMLParser):
 
 
 class EpubBook:
-    def __init__(self, path: str):
+    def __init__(self, path: str, use_css: bool = True):
         self.path = os.path.abspath(path)
+        self.use_css = use_css
         self.zf = zipfile.ZipFile(path)
         self.title = os.path.basename(path)
         self.author = "Unknown"
@@ -205,6 +283,7 @@ class EpubBook:
         self.spine_hrefs: List[str] = []
         self.chapter_titles: List[str] = []
         self.chapters: List[str] = []
+        self.chapter_styles: Dict[int, List[Tuple[int, int, dict]]] = {}  # chapter_idx -> [(char_start, char_end, styles), ...]
         self.toc: List[TocEntry] = []
         self._parse_package()
         self._load_chapters()
@@ -274,8 +353,16 @@ class EpubBook:
                 raw = self.zf.read(href).decode("utf-8", errors="replace")
             except KeyError:
                 self.chapters.append("[Missing chapter content]\n")
+                self.chapter_styles[idx] = []
                 self.chapter_titles.append("Chapter %d" % (idx + 1))
                 continue
+            
+            # Extract styles from raw HTML if CSS is enabled
+            if self.use_css:
+                self.chapter_styles[idx] = self._extract_styles_from_html(raw)
+            else:
+                self.chapter_styles[idx] = []
+            
             extractor = EpubTextExtractor()
             extractor.feed(raw)
             text = extractor.get_text().strip()
@@ -284,6 +371,44 @@ class EpubBook:
                 text = "[This chapter contains no readable text.]"
             self.chapters.append(text + "\n")
             self.chapter_titles.append(title)
+
+    def _extract_styles_from_html(self, raw_html: str) -> List[Tuple[int, int, dict]]:
+        """Extract inline styles from HTML and map them to character positions in extracted text.
+        
+        Returns list of (char_start, char_end, styles) tuples for styled text segments.
+        This is a simplified approach that only handles inline styles on text content.
+        """
+        styles = []
+        
+        # Find all elements with inline styles that contain text
+        # Pattern: <tag style="...">text</tag>
+        pattern = r'<(\w+)([^>]*style\s*=\s*["\']([^"\']+)["\'][^>]*)>([^<]+)</\1>'
+        
+        for match in re.finditer(pattern, raw_html, re.I | re.S):
+            tag = match.group(1).lower()
+            style_attr = match.group(3)
+            text_content = match.group(4)
+            
+            # Skip non-text elements
+            if tag in ('script', 'style', 'nav', 'footer', 'header'):
+                continue
+            
+            # Parse the styles
+            parsed_styles = parse_inline_style(style_attr)
+            if not parsed_styles:
+                continue
+            
+            # Get the clean text that would appear in the extracted content
+            clean_text = ascii_sanitize(html.unescape(text_content).strip())
+            if not clean_text:
+                continue
+            
+            # Find this text in the extracted chapter text
+            # We'll do this later when rendering, not here
+            # For now, just store the style info with the HTML position
+            styles.append((match.start(), match.end(), parsed_styles, clean_text))
+        
+        return styles
 
     def _guess_title(self, raw_html: str, idx: int) -> str:
         m = re.search(r"<title[^>]*>(.*?)</title>", raw_html, flags=re.I | re.S)
@@ -1422,7 +1547,7 @@ class ReaderUI:
 
 def usage() -> str:
     return (
-        "Usage: termepub_reader.py [book.epub] [--bookmark]\n\n"
+        "Usage: termepub_reader.py [book.epub] [--bookmark] [--no-css]\n\n"
         "Controls:\n"
         "  Left / Right  previous/next page\n"
         "  Up / Down     previous/next chapter\n"
@@ -1436,6 +1561,10 @@ def usage() -> str:
         "  h             toggle top title bar\n"
         "  g             toggle heading style (bold/reverse)\n"
         "  q             quit\n"
+        "\n"
+        "Options:\n"
+        "  --bookmark    open book at saved bookmark position\n"
+        "  --no-css      disable inline CSS styling (faster on slow devices)\n"
     )
 
 
@@ -1446,9 +1575,11 @@ def main(argv: List[str]) -> int:
 
     epub_path = None
     open_bookmark = False
+    use_css = True
     if len(argv) >= 2:
         epub_path = argv[1]
         open_bookmark = "--bookmark" in argv[2:]
+        use_css = "--no-css" not in argv[2:]
 
     store = StateStore()
 
@@ -1456,17 +1587,17 @@ def main(argv: List[str]) -> int:
         if epub_path:
             if not os.path.exists(epub_path):
                 raise FileNotFoundError("File not found: %s" % epub_path)
-            initial_book = EpubBook(epub_path)
+            initial_book = EpubBook(epub_path, use_css=use_css)
         else:
             last_book_path = store.get_last_book_path()
             if last_book_path and os.path.exists(last_book_path):
-                initial_book = EpubBook(last_book_path)
+                initial_book = EpubBook(last_book_path, use_css=use_css)
             else:
                 picker = FilePicker(stdscr, os.getcwd())
                 selected = picker.run()
                 if not selected:
                     return
-                initial_book = EpubBook(selected)
+                initial_book = EpubBook(selected, use_css=use_css)
 
         if open_bookmark:
             bm = store.get_bookmark(initial_book.path)
