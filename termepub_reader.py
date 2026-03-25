@@ -389,8 +389,8 @@ class EpubBook:
             style_attr = match.group(3)
             text_content = match.group(4)
             
-            # Skip non-text elements
-            if tag in ('script', 'style', 'nav', 'footer', 'header'):
+            # Skip non-text elements AND headings (headings are handled separately)
+            if tag in ('script', 'style', 'nav', 'footer', 'header', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'title'):
                 continue
             
             # Parse the styles
@@ -403,9 +403,7 @@ class EpubBook:
             if not clean_text:
                 continue
             
-            # Find this text in the extracted chapter text
-            # We'll do this later when rendering, not here
-            # For now, just store the style info with the HTML position
+            # Store the style info
             styles.append((match.start(), match.end(), parsed_styles, clean_text))
         
         return styles
