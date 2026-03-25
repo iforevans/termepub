@@ -380,6 +380,21 @@ class EpubBook:
             else:
                 title = "Chapter %d" % (idx + 1)
             
+            # Remove duplicate chapter title from start of text if it matches the TOC title
+            # Some EPUBs have the chapter heading both in TOC and as first element of content
+            text_lower = text.lower().strip()
+            title_lower = title.lower().strip()
+            if text_lower.startswith(title_lower):
+                # Try to remove the title from the start of the text
+                # Handle variations: "CHAPTER ONE", "CHAPTER ONE\n", "CHAPTER ONE.", etc.
+                pattern = r'^' + re.escape(title) + r'\s*\.?\s*\n*'
+                text = re.sub(pattern, '', text, flags=re.I)
+                # If still starts with the title (maybe no period/newline), try again
+                text_lower = text.lower().strip()
+                if text_lower.startswith(title_lower):
+                    pattern = r'^' + re.escape(title) + r'\s+'
+                    text = re.sub(pattern, '', text, flags=re.I)
+            
             if not text:
                 text = "[This chapter contains no readable text.]"
             self.chapters.append(text + "\n")
