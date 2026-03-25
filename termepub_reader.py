@@ -403,7 +403,9 @@ class EpubBook:
             if not clean_text:
                 continue
             
-            # Store the style info
+            # Find this text in the extracted chapter text
+            # We'll do this later when rendering, not here
+            # For now, just store the style info with the HTML position
             styles.append((match.start(), match.end(), parsed_styles, clean_text))
         
         return styles
