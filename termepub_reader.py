@@ -286,8 +286,8 @@ class EpubBook:
         self.chapter_styles: Dict[int, List[Tuple[int, int, dict]]] = {}  # chapter_idx -> [(char_start, char_end, styles), ...]
         self.toc: List[TocEntry] = []
         self._parse_package()
-        self._load_chapters()
-        self._load_toc()
+        self._load_toc()       # Load TOC FIRST
+        self._load_chapters()  # Then load chapters (can use TOC titles)
         self._fill_missing_toc_entries()
 
     def _read_xml(self, member: str) -> ET.Element:
