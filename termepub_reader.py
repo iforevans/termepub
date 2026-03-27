@@ -1,4 +1,15 @@
 #!/usr/bin/env python3
+"""
+termepub_reader.py - Terminal-based EPUB reader with inline CSS styling support.
+
+Features:
+- Read EPUB files in the terminal using curses
+- Inline CSS styling (bold, underline, italic, line-through)
+- Chapter navigation, bookmarks, file picker with live search
+- State persistence across sessions
+
+Version: 0.4.2
+"""
 import curses
 import hashlib
 import html
@@ -14,6 +25,8 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
+
+__version__ = "0.4.2"
 
 CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "termepub")
 STATE_FILE = os.path.join(CONFIG_DIR, "state.json")
@@ -34,15 +47,14 @@ class BookState:
 
 @dataclass
 class StyledSegment:
-    """A text segment with associated CSS styles."""
+    """A text segment with associated CSS styles.
+    
+    Each segment represents a contiguous run of text with the same styling.
+    Segments are created during HTML parsing and merged when adjacent segments
+    have identical styles for efficiency.
+    """
     text: str
     styles: dict  # {'font_weight': 'bold', 'color': '#ff0000', ...}
-    
-    def merge_with(self, other: 'StyledSegment') -> 'StyledSegment':
-        """Merge with another segment if styles are identical."""
-        if self.styles == other.styles:
-            return StyledSegment(self.text + other.text, self.styles)
-        return None
 
 
 def strip_ns(tag: str) -> str:
@@ -113,18 +125,33 @@ def parse_inline_style(style_attr: str) -> dict:
     """Parse inline style attribute into a dict of CSS properties.
     
     Example: 'font-weight: bold; color: #ff0000; text-align: center'
-    Returns: {'font_weight': 'bold', 'color': '#ff0000', 'text_align': 'center'}
+    Returns: {'font_weight': 'bold', 'color': '#ff0000', 'text-align': 'center'}
+    
+    Args:
+        style_attr: CSS style string from HTML style="" attribute.
+    
+    Returns:
+        Dictionary with CSS properties as keys (with - replaced by _).
+    
+    Note:
+        Does not validate CSS syntax - malformed values are passed through.
+        Empty or invalid style strings return empty dict.
     """
     if not style_attr:
         return {}
     styles = {}
-    for prop in style_attr.split(';'):
-        if ':' in prop:
-            key, value = prop.split(':', 1)
-            key = key.strip().replace('-', '_')
-            value = value.strip()
-            if key and value:
-                styles[key] = value
+    try:
+        for prop in style_attr.split(';'):
+            if ':' in prop:
+                key, value = prop.split(':', 1)
+                key = key.strip().replace('-', '_')
+                value = value.strip()
+                if key and value:
+                    styles[key] = value
+    except Exception:
+        # If parsing fails for any reason, return empty dict
+        # This prevents malformed CSS from crashing the reader
+        pass
     return styles
 
 
@@ -132,7 +159,19 @@ def hex_to_16_color(hex_color: str) -> Optional[int]:
     """Convert a hex color to the nearest 16-color ANSI palette.
     
     Maps hex colors (e.g., '#ff0000', 'rgb(255,0,0)') to curses.COLOR_* constants.
-    Returns None if color cannot be mapped.
+    This is a helper for future color rendering - currently not used in rendering
+    as dynamic color pair management is not yet implemented.
+    
+    Args:
+        hex_color: Color in hex format (#rrggbb, #rgb, rrggbb) or rgb(r,g,b).
+    
+    Returns:
+        ANSI color index (0-15) for the closest matching color, or None if
+        the color cannot be parsed.
+    
+    Note:
+        Uses Euclidean distance in RGB space to find the closest color.
+        The 16-color palette includes standard colors plus bright variants.
     """
     hex_color = hex_color.strip()
     
@@ -201,7 +240,11 @@ class EpubTextExtractor(HTMLParser):
         self.pre_depth = 0
         self.list_depth = 0
         self.skip_depth = 0
-        self.style_stack: List[dict] = [{}]  # Stack for style inheritance
+        # Style stack for CSS inheritance: each entry is a dict of styles
+        # added by a particular tag. The current style is the merge of all
+        # styles in the stack. Stack discipline: push on starttag with styles,
+        # pop on corresponding endtag.
+        self.style_stack: List[dict] = [{}]
 
     def _get_current_styles(self) -> dict:
         """Get current inherited styles by merging the style stack."""
@@ -312,6 +355,14 @@ class EpubTextExtractor(HTMLParser):
         """Merge adjacent segments with identical styles for efficiency.
         
         Does NOT merge across paragraph breaks (whitespace-only segments).
+        This preserves paragraph structure while reducing the number of
+        segments we need to process during rendering.
+        
+        Args:
+            segments: List of styled segments to merge.
+        
+        Returns:
+            List of segments with identical adjacent segments combined.
         """
         if not segments:
             return segments
@@ -323,6 +374,7 @@ class EpubTextExtractor(HTMLParser):
             if last.text.strip() == '' or seg.text.strip() == '':
                 merged.append(seg)
             elif last.styles == seg.styles:
+                # Merge: concatenate text, keep same styles
                 merged[-1] = StyledSegment(last.text + seg.text, last.styles)
             else:
                 merged.append(seg)
@@ -1123,8 +1175,18 @@ class ReaderUI:
     def styles_to_curses_attr(self, css_styles: dict) -> int:
         """Convert CSS styles dict to curses attribute flags.
         
-        Handles: font-weight (bold), text-decoration (underline, line-through)
-        Colors are mapped to the 16-color ANSI palette.
+        Handles the following CSS properties:
+        - font_weight: 'bold' or numeric values (700, 800, 900) → curses.A_BOLD
+        - text_decoration: 'underline' → curses.A_UNDERLINE
+        - text_decoration: 'line-through' → not rendered (terminal limitation)
+        - color: parsed but not yet applied to rendering (future work)
+        
+        Args:
+            css_styles: Dictionary of CSS property-value pairs.
+                       Keys are underscores (e.g., 'font_weight' not 'font-weight').
+        
+        Returns:
+            curses attribute flags (e.g., curses.A_BOLD | curses.A_UNDERLINE)
         """
         attr = curses.A_NORMAL
 
