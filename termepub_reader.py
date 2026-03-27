@@ -18,7 +18,6 @@ import os
 import re
 import sys
 import textwrap
-import time
 import unicodedata
 import zipfile
 from dataclasses import dataclass
@@ -1750,6 +1749,7 @@ def usage() -> str:
         "Options:\n"
         "  --bookmark    open book at saved bookmark position\n"
         "  --no-css      disable inline CSS styling (faster on slow devices)\n"
+        "  --version     show version number and exit\n"
         "\n"
         "CSS Support:\n"
         "  Inline CSS styling is now rendered (bold, underline, colors).\n"
@@ -1758,6 +1758,9 @@ def usage() -> str:
 
 
 def main(argv: List[str]) -> int:
+    if len(argv) >= 2 and argv[1] == "--version":
+        print(f"termepub-reader {__version__}")
+        return 0
     if len(argv) >= 2 and argv[1] in {"-h", "--help"}:
         sys.stdout.write(usage())
         return 0
@@ -1801,13 +1804,13 @@ def main(argv: List[str]) -> int:
         curses.wrapper(runner)
         return 0
     except FileNotFoundError as exc:
-        sys.stderr.write(str(exc) + "\n")
+        sys.stderr.write(f"{exc}\n")
         return 1
     except zipfile.BadZipFile:
-        sys.stderr.write("Not a valid EPUB/ZIP file: %s\n" % (epub_path or "selected file"))
+        sys.stderr.write(f"Not a valid EPUB/ZIP file: {epub_path or 'selected file'}\n")
         return 1
     except Exception as exc:
-        sys.stderr.write("Failed to open EPUB: %s\n" % exc)
+        sys.stderr.write(f"Failed to open EPUB: {exc}\n")
         return 1
 
 

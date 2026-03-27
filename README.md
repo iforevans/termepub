@@ -35,12 +35,13 @@ A terminal-based (NCurses) ePUB reader with a clean, keyboard-driven interface. 
 ## Usage
 
 ```bash
-termepub_reader.py [book.epub] [--bookmark] [--no-css]
+termepub_reader.py [book.epub] [--bookmark] [--no-css] [--version]
 ```
 
 **Options:**
 - `--bookmark`: Open book at saved bookmark position
 - `--no-css`: Disable inline CSS styling (faster on slow devices)
+- `--version`: Show version number and exit
 
 ## Installation
 
