@@ -296,7 +296,7 @@ class EpubTextExtractor(HTMLParser):
         elif tag == "img":
             alt = (attrs_dict.get("alt") or "").strip()
             if alt:
-                self.segments.append(StyledSegment("[Image: %s]" % alt, self._get_current_styles().copy()))
+                self.segments.append(StyledSegment(f"[Image: {alt}]", self._get_current_styles().copy()))
         elif tag == "br":
             self.segments.append(StyledSegment("\n", self._get_current_styles().copy()))
         elif tag in {"p", "div", "section", "article"}:
@@ -547,7 +547,7 @@ class EpubBook:
                 title = ascii_sanitize(title)
                 if title:
                     return title
-        return "Chapter %d" % (idx + 1)
+        return f"Chapter {idx + 1}"
 
     def _load_toc(self):
         nav_item = None
@@ -761,10 +761,10 @@ class FilePicker:
         for idx, (normalized, label, full, is_dir) in enumerate(normalized_entries):
             if normalized and normalized[0].lower() == letter:
                 self.selected = idx
-                self.status = "Jumped to: %s" % label
+                self.status = f"Jumped to: {label}"
                 break
         else:
-            self.status = "No entries starting with '%s'" % letter.upper()
+            self.status = f"No entries starting with '{letter.upper()}'"
 
     def refresh_entries(self):
         entries: List[Tuple[str, str, bool]] = []
@@ -774,7 +774,7 @@ class FilePicker:
         try:
             names = os.listdir(self.current_dir)
         except OSError as exc:
-            self.status = "Cannot open directory: %s" % exc
+            self.status = f"Cannot open directory: {exc}"
             names = []
         dirs = []
         files = []
@@ -831,10 +831,10 @@ class FilePicker:
         for idx, (normalized, label, full, is_dir) in enumerate(normalized_entries):
             if normalized and normalized[0].lower() == letter:
                 self.selected = idx
-                self.status = "Jumped to: %s" % label
+                self.status = f"Jumped to: {label}"
                 break
         else:
-            self.status = "No entries starting with '%s'" % letter.upper()
+            self.status = f"No entries starting with '{letter.upper()}'"
 
     def refresh_entries(self):
         entries: List[Tuple[str, str, bool]] = []
@@ -844,7 +844,7 @@ class FilePicker:
         try:
             names = os.listdir(self.current_dir)
         except OSError as exc:
-            self.status = "Cannot open directory: %s" % exc
+            self.status = f"Cannot open directory: {exc}"
             names = []
         dirs = []
         files = []
@@ -903,7 +903,7 @@ class FilePicker:
                     self.status = "Jump: "
                 elif 32 <= ch <= 126:  # Printable character
                     waiting_letter_buffer = chr(ch)
-                    self.status = "Jump to: %s" % waiting_letter_buffer.upper()
+                    self.status = f"Jump to: {waiting_letter_buffer.upper()}"
                 continue
             
             # Handle search mode
@@ -918,7 +918,7 @@ class FilePicker:
                 elif ch == 10 or ch == 13:  # Enter - exit search mode
                     self.in_search_mode = False
                     search_input = ""
-                    self.status = "Filter: %s" % self.filter_text if self.filter_text else ""
+                    self.status = f"Filter: {self.filter_text}" if self.filter_text else ""
                 elif ch == 127 or ch == curses.KEY_BACKSPACE or ch == 8:  # Backspace
                     search_input = search_input[:-1]
                     self.filter_text = search_input
@@ -993,7 +993,7 @@ class FilePicker:
             search_bar = "Filter: " + self.filter_text
         
         jump_hint = "j:jump" if not self.status and not search_bar else ""
-        title = "Open EPUB - Enter/Right: open, Left: up, s:search, j:jump, q/Esc: cancel %s" % jump_hint
+        title = f"Open EPUB - Enter/Right: open, Left: up, s:search, j:jump, q/Esc: cancel {jump_hint}"
         
         try:
             self.stdscr.addnstr(0, 0, title.ljust(max(0, w - 1)), w - 1, curses.A_REVERSE)
@@ -1071,7 +1071,7 @@ class ReaderUI:
         self.total_pages = self._compute_total_pages()  # Compute once
         self.store.set_state(self.book.path, BookState(self.chapter_index, self.page_index))
         self.store.save()
-        self.show_info_popup("Loaded", "Loaded: %s" % self.book.title)
+        self.show_info_popup("Loaded", f"Loaded: {self.book.title}")
 
     def _compute_total_pages(self) -> int:
         """Compute total pages in the book (cached, doesn't change with screen resize)."""
@@ -1179,7 +1179,7 @@ class ReaderUI:
         self.pages_cache.clear()
         self.pages_attrs_cache.clear()
         self.apply_theme()
-        self.show_info_popup("Theme", "Theme: %s" % self.theme)
+        self.show_info_popup("Theme", f"Theme: {self.theme}")
 
     def toggle_header(self):
         self.show_header = not self.show_header
@@ -1187,7 +1187,7 @@ class ReaderUI:
         self.pages_cache.clear()
         self.total_pages = self._compute_total_pages()  # Recompute when header changes
         self.store.save()
-        self.show_info_popup("Header", "Header: %s" % ("on" if self.show_header else "off"))
+        self.show_info_popup("Header", f"Header: {'on' if self.show_header else 'off'}")
 
     def toggle_heading_style(self):
         """Toggle between reverse and bold for headings."""
@@ -1199,7 +1199,7 @@ class ReaderUI:
             style = "reverse"
         self.pages_cache.clear()
         self.pages_attrs_cache.clear()
-        self.show_info_popup("Heading", "Heading style: %s" % style)
+        self.show_info_popup("Heading", f"Heading style: {style}")
 
     def get_overall_progress(self) -> Tuple[int, int]:
         """Return (current_page, total_pages) for the entire book."""
@@ -1646,7 +1646,7 @@ class ReaderUI:
             self.show_info_popup("Search", "Search cancelled")
             return
         if not self.search(query):
-            self.show_info_popup("Search", "Not found: %s" % query)
+            self.show_info_popup("Search", f"Not found: {query}")
 
     def search(self, query: str) -> bool:
         q = ascii_sanitize(query).lower()
@@ -1694,7 +1694,7 @@ class ReaderUI:
         try:
             new_book = EpubBook(selected)
         except Exception as exc:
-            self.show_info_popup("Error", "Failed to open: %s" % exc, is_error=True)
+            self.show_info_popup("Error", f"Failed to open: {exc}", is_error=True)
             return
         self.load_book(new_book, use_saved_position=True)
 
@@ -1748,7 +1748,7 @@ def main(argv: List[str]) -> int:
     def runner(stdscr):
         if epub_path:
             if not os.path.exists(epub_path):
-                raise FileNotFoundError("File not found: %s" % epub_path)
+                raise FileNotFoundError(f"File not found: {epub_path}")
             initial_book = EpubBook(epub_path, use_css=use_css)
         else:
             last_book_path = store.get_last_book_path()
