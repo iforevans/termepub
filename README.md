@@ -2,7 +2,7 @@
 
 A terminal-based (NCurses) ePUB reader with a clean, keyboard-driven interface. Built for offline reading in terminal environments.
 
-**Version:** 0.4.2
+**Version:** 0.4.3
 
 ## Features
 
@@ -82,6 +82,10 @@ User state (bookmarks, reading position) is stored in `~/.config/termepub/state.
 
 MIT
 
+## Author
+
+Ifor Evans - [@iforevans](https://github.com/iforevans)
+
 ---
 
-*Created by Ifor Evans (Sparky)*
+Pair programmed with my OpenClaw Agent Sparky ⚡. Using local Qwen 27B running on an eGPU (RTX 3090/24GB)
