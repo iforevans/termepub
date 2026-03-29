@@ -1320,7 +1320,7 @@ class ReaderUI:
         self.store.save()
 
     def _ensure_page_in_range(self):
-        pages = self._get_pages(self.chapter_index)
+        pages = self._get_plain_pages(self.chapter_index)
         if not pages:
             self.page_index = 0
             return
@@ -1431,13 +1431,11 @@ class ReaderUI:
         self.pages_attrs_cache[cache_key] = pages
         return pages
 
-    def _get_pages_with_attrs(self, chapter_index: int) -> List[Tuple[List[str], List[int]]]:
-        """Legacy method - now just wraps _get_styled_pages for compatibility."""
-        styled_pages = self._get_styled_pages(chapter_index)
-        return [([line for line, _ in page], [attr for _, attr in page]) for page in styled_pages]
-
-    def _get_pages(self, chapter_index: int) -> List[List[str]]:
-        """Legacy method for backward compatibility."""
+    def _get_plain_pages(self, chapter_index: int) -> List[List[str]]:
+        """Get pages as plain text (without styling attributes).
+        
+        Used by navigation methods that only need page count, not rendering.
+        """
         styled_pages = self._get_styled_pages(chapter_index)
         return [[line for line, _ in page] for page in styled_pages]
 
@@ -1542,7 +1540,7 @@ class ReaderUI:
             self._ensure_page_in_range()
 
     def next_page(self):
-        pages = self._get_pages(self.chapter_index)
+        pages = self._get_plain_pages(self.chapter_index)
         if self.page_index + 1 < len(pages):
             self.page_index += 1
         elif self.chapter_index + 1 < len(self.book.chapters):
@@ -1556,7 +1554,7 @@ class ReaderUI:
             self.page_index -= 1
         elif self.chapter_index > 0:
             self.chapter_index -= 1
-            prev_pages = self._get_pages(self.chapter_index)
+            prev_pages = self._get_plain_pages(self.chapter_index)
             self.page_index = max(0, len(prev_pages) - 1)
         else:
             self.show_info_popup("Info", "Start of book")
