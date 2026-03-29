@@ -251,7 +251,16 @@ class EpubTextExtractor(HTMLParser):
         self.style_stack: List[dict] = [{}]
 
     def _get_current_styles(self) -> dict:
-        """Get current inherited styles by merging the style stack."""
+        """Get current inherited styles by merging the style stack.
+        
+        Includes runtime validation to catch style stack discipline errors
+        (e.g., mismatched start/end tags causing underflow).
+        """
+        if not self.style_stack:
+            raise RuntimeError(
+                "Style stack underflow: attempted to get styles with empty stack. "
+                "This indicates a bug in tag handling (e.g., extra endtag without starttag)."
+            )
         merged = {}
         for style_dict in self.style_stack:
             merged.update(style_dict)
@@ -1003,7 +1012,7 @@ class FilePicker:
         try:
             self.stdscr.addnstr(0, 0, title.ljust(max(0, w - 1)), w - 1, curses.A_REVERSE)
         except curses.error:
-            pass
+            pass  # Terminal too narrow - skip title display
         
         # Second line: search/filter bar or current directory
         try:
@@ -1012,7 +1021,7 @@ class FilePicker:
             else:
                 self.stdscr.addnstr(1, 0, self.current_dir, w - 1)
         except curses.error:
-            pass
+            pass  # Terminal too narrow - skip path display
 
         body_top = 2
         body_h = max(1, h - 4 if search_bar else h - 3)
@@ -1028,14 +1037,14 @@ class FilePicker:
             try:
                 self.stdscr.addnstr(row, 0, label, w - 1, attr)
             except curses.error:
-                pass
+                pass  # Terminal too narrow for this entry - skip it
             row += 1
 
         footer = self.status or "Directories and .epub files"
         try:
             self.stdscr.addnstr(h - 1, 0, footer.ljust(max(0, w - 1)), w - 1, curses.A_REVERSE)
         except curses.error:
-            pass
+            pass  # Terminal too narrow - skip footer
         self.stdscr.refresh()
         self.status = ""
 
@@ -1172,7 +1181,7 @@ class ReaderUI:
         if 'color' in css_styles:
             color_idx = hex_to_16_color(css_styles['color'])
             if color_idx is not None and self.has_colors:
-                # For now, skip color rendering - would need pair management
+                # TODO: Color rendering not yet implemented - would need dynamic pair management
                 pass
 
         return attr
@@ -1299,11 +1308,12 @@ class ReaderUI:
             self.stdscr.addnstr(start_y + popup_height - 2, start_x + 1, prompt, popup_width - 2)
             self.stdscr.attroff(popup_attr)
         except curses.error:
-            pass
+            pass  # Terminal too small - skip prompt text
         
         self.stdscr.refresh()
         # Wait for any key
         self.stdscr.getch()
+        # Clear status message after popup is dismissed
         self.status_message = ""
     
     def run(self):
@@ -1461,7 +1471,7 @@ class ReaderUI:
             try:
                 self.stdscr.addnstr(0, 0, header, w - 1, self.header_attr)
             except curses.error:
-                pass
+                pass  # Terminal too narrow - skip header
         
         # Render each line with its computed attributes
         for idx, (line, attr) in enumerate(page, start=body_start):
@@ -1470,7 +1480,7 @@ class ReaderUI:
             try:
                 self.stdscr.addnstr(idx, 0, line, w - 1, attr)
             except curses.error:
-                pass
+                pass  # Terminal too narrow - skip this line
         
         # Get overall book progress
         current_page, total_pages = self.get_overall_progress()
@@ -1488,8 +1498,9 @@ class ReaderUI:
         try:
             self.stdscr.addnstr(h - 1, 0, footer.ljust(max(0, w - 1)), w - 1, self.footer_attr)
         except curses.error:
-            pass
+            pass  # Terminal too narrow - skip footer
         self.stdscr.refresh()
+        # Clear status message each frame to prevent persistence across draws
         self.status_message = ""
 
     def prompt(self, prompt_text: str) -> str:
@@ -1612,7 +1623,7 @@ class ReaderUI:
         try:
             self.stdscr.addnstr(0, 0, title.ljust(max(0, w - 1)), w - 1, self.header_attr)
         except curses.error:
-            pass
+            pass  # Terminal too narrow - skip TOC title
         body_h = max(1, h - 2)
         start = max(0, selected - body_h // 2)
         end = min(len(entries), start + body_h)
@@ -1631,7 +1642,7 @@ class ReaderUI:
             try:
                 self.stdscr.addnstr(row, 0, text, w - 1, attr)
             except curses.error:
-                pass
+                pass  # Terminal too narrow - skip this TOC entry
             row += 1
         
         # Show navigation hint at bottom
@@ -1639,7 +1650,7 @@ class ReaderUI:
         try:
             self.stdscr.addnstr(h - 1, 0, hint.ljust(max(0, w - 1)), w - 1, self.footer_attr)
         except curses.error:
-            pass
+            pass  # Terminal too narrow - skip navigation hint
         
         self.stdscr.refresh()
 

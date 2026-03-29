@@ -2,7 +2,7 @@
 
 A terminal-based (NCurses) ePUB reader with a clean, keyboard-driven interface. Built for offline reading in terminal environments.
 
-**Version:** 0.4.4
+**Version:** 0.4.7 (2026-03-29)
 
 ## Features
 
@@ -89,3 +89,59 @@ Ifor Evans - [@iforevans](https://github.com/iforevans)
 ---
 
 Pair programmed with my OpenClaw Agent Sparky ⚡. Using local Qwen 27B running on an eGPU (RTX 3090/24GB)
+
+---
+
+## Recent Changes
+
+### v0.4.7 (2026-03-29) - Code Quality & Safety
+
+**Cleanup:**
+- Removed dead code: `_get_pages_with_attrs()` (was defined but never called)
+- Renamed `_get_pages()` → `_get_plain_pages()` for clarity
+- Extracted footer format string to `FOOTER_FORMAT` constant
+- Added clarifying comments to status message clears
+
+**Documentation:**
+- Added comments to all 13 bare `pass` statements explaining error handling
+- Improved docstring for `_get_current_styles()`
+
+**Safety:**
+- Added runtime validation for style stack underflow (catches HTML parsing bugs)
+
+**Net change:** -4 lines of dead code, +15 lines of documentation/safety
+
+### v0.4.6 (2026-03-29) - Code Cleanup
+
+**Cleanup:**
+- Converted remaining `%` formatting to f-strings (18 instances)
+- Improved consistency with modern Python 3.9+ style
+
+### v0.4.5 (2026-03-28) - TOC Improvements
+
+**Features:**
+- Added `=>` visual indicator for selected TOC entries
+- Removed redundant chapter numbers (cleaner display)
+- Added navigation hint in TOC footer
+
+### v0.4.4 (2026-03-28) - Code Quality
+
+**Cleanup:**
+- Removed 44 lines of dead code (duplicate methods, unused CSS extraction)
+- Added cache invalidation for theme/heading style toggles
+- Added `--version` flag
+- Added Sparky co-author credit
+
+### v0.4.3 (2026-03-27) - CSS Rendering
+
+**Features:**
+- Full inline CSS styling support (bold, underline, italic, line-through)
+- StyledSegment dataclass with style stack for CSS inheritance
+- Handles semantic tags: `<b>`, `<strong>`, `<i>`, `<em>`, `<u>`, `<s>`
+
+### v0.4.2 (2026-03-25) - Unicode & Popups
+
+**Improvements:**
+- Comprehensive Unicode sanitization (34 character replacements)
+- Styled popup system with bordered styling
+- Better terminal compatibility for complex Unicode content
