@@ -25,10 +25,15 @@ from html.parser import HTMLParser
 from typing import Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 
-__version__ = "0.4.4"
+__version__ = "0.4.6"
 
 CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "termepub")
 STATE_FILE = os.path.join(CONFIG_DIR, "state.json")
+
+# Footer format string for status bar display
+FOOTER_FORMAT = (
+    "C {}/{} P {}/{} {}% | L/R page | U/D chap | t TOC | / find | Bmark | Open | Mode | Head | Quit |"
+)
 
 
 @dataclass
@@ -1472,7 +1477,7 @@ class ReaderUI:
         progress_pct = int((current_page / total_pages) * 100) if total_pages > 0 else 0
         
         # Compact footer for smaller screens
-        footer = "C %d/%d P %d/%d %d%% | L/R page | U/D chap | t TOC | / find | Bmark | Open | Mode | Head | Quit |" % (
+        footer = FOOTER_FORMAT.format(
             self.chapter_index + 1,
             len(self.book.chapters),
             current_page,
