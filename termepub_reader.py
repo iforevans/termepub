@@ -25,7 +25,7 @@ from html.parser import HTMLParser
 from typing import Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 
-__version__ = "0.4.8"
+__version__ = "0.4.9"
 
 CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "termepub")
 STATE_FILE = os.path.join(CONFIG_DIR, "state.json")
@@ -1068,6 +1068,9 @@ class ReaderUI:
         self.footer_attr = curses.A_REVERSE
         self.selected_attr = curses.A_REVERSE
         self.heading_attr = curses.A_REVERSE  # Can be changed to A_BOLD, A_ITALIC, etc.
+        # Color pair cache for dynamic text colors: color_idx -> pair_number
+        self.color_pair_cache: Dict[int, int] = {}
+        self.next_color_pair: int = 8  # Start after pairs 1-7 (reserved for UI)
         self.load_book(book, use_saved_position=True)
 
     def load_book(self, book: EpubBook, use_saved_position: bool = True):
@@ -1154,7 +1157,7 @@ class ReaderUI:
         - font_weight: 'bold' or numeric values (700, 800, 900) → curses.A_BOLD
         - text_decoration: 'underline' → curses.A_UNDERLINE
         - text_decoration: 'line-through' → not rendered (terminal limitation)
-        - color: parsed but not yet applied to rendering (future work)
+        - color: hex/rgb colors mapped to 16-color ANSI palette with dynamic pair allocation
         
         Args:
             css_styles: Dictionary of CSS property-value pairs.
@@ -1176,13 +1179,28 @@ class ReaderUI:
         # Font style: italic (not well supported, skip for now)
         # Some terminals support curses.A_ITALIC but it's non-standard
 
-        # Color mapping (simplified: just use bright attributes for now)
-        # Full implementation would need dynamic color pair allocation
-        if 'color' in css_styles:
+        # Color rendering: dynamic color pair allocation
+        if 'color' in css_styles and self.has_colors:
             color_idx = hex_to_16_color(css_styles['color'])
-            if color_idx is not None and self.has_colors:
-                # TODO: Color rendering not yet implemented - would need dynamic pair management
-                pass
+            if color_idx is not None:
+                # Allocate a new color pair if we haven't seen this color before
+                if color_idx not in self.color_pair_cache:
+                    try:
+                        # Background: -1 means use default terminal background
+                        curses.init_pair(self.next_color_pair, color_idx, -1)
+                        self.color_pair_cache[color_idx] = self.next_color_pair
+                        self.next_color_pair += 1
+                        # Safety: limit to 256 pairs (most terminals support this)
+                        if self.next_color_pair > 255:
+                            self.next_color_pair = 8  # Wrap around, will overwrite old pairs
+                    except curses.error:
+                        # Terminal doesn't support this many color pairs, skip coloring
+                        pass
+
+                # Apply the color pair to the attribute
+                pair_num = self.color_pair_cache.get(color_idx)
+                if pair_num is not None:
+                    attr |= curses.color_pair(pair_num)
 
         return attr
 
