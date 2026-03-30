@@ -111,12 +111,6 @@ Pair programmed with my OpenClaw Agent Sparky ⚡. Using local Qwen 27B running 
 
 **Net change:** -4 lines of dead code, +15 lines of documentation/safety
 
-### v0.4.6 (2026-03-29) - Code Cleanup
-
-**Cleanup:**
-- Converted remaining `%` formatting to f-strings (18 instances)
-- Improved consistency with modern Python 3.9+ style
-
 ### v0.4.8 (2026-03-30) - Style Boundary Fix
 
 **Bug Fixes:**
@@ -135,6 +129,12 @@ Pair programmed with my OpenClaw Agent Sparky ⚡. Using local Qwen 27B running 
 - Removed dead code (`_get_pages_with_attrs` method)
 - Renamed `_get_pages` to `_get_plain_pages` for clarity
 - Added safety checks for style stack underflow
+
+### v0.4.6 (2026-03-29) - Code Cleanup
+
+**Cleanup:**
+- Converted remaining `%` formatting to f-strings (18 instances)
+- Improved consistency with modern Python 3.9+ style
 
 ### v0.4.5 (2026-03-28) - TOC Improvements
 
