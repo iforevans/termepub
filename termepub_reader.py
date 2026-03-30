@@ -4,11 +4,11 @@ termepub_reader.py - Terminal-based EPUB reader with inline CSS styling support.
 
 Features:
 - Read EPUB files in the terminal using curses
-- Inline CSS styling (bold, underline, italic, line-through)
+- Inline CSS styling (bold, underline, italic, colors)
 - Chapter navigation, bookmarks, file picker with live search
 - State persistence across sessions
 
-Version: 0.4.2
+Version: 0.4.9
 """
 import curses
 import hashlib
