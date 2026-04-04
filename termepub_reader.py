@@ -35,9 +35,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DICT_DIR = os.path.join(os.path.expanduser("~"), ".config", "termepub")
 WORD_LIST_PATH = os.path.join(DICT_DIR, "words.txt")
 EC_DICT_INDEX_PATH = os.path.join(SCRIPT_DIR, "ecdict_index.json")
-GCIDE_INDEX_PATH = os.path.join(DICT_DIR, "gcide_index.json")
 _ecdict_index = None
-_gcide_index = None
 
 CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "termepub")
 STATE_FILE = os.path.join(CONFIG_DIR, "state.json")
@@ -820,23 +818,6 @@ def load_ecdict_index():
         return None
 
 
-def load_gcide_index():
-    """Load GCIDE dictionary index from JSON file."""
-    global _gcide_index
-    if _gcide_index is not None:
-        return _gcide_index
-    
-    if not os.path.exists(GCIDE_INDEX_PATH):
-        return None
-    
-    try:
-        with open(GCIDE_INDEX_PATH, 'r') as f:
-            _gcide_index = json.load(f)
-        return _gcide_index
-    except Exception:
-        return None
-
-
 def lookup_word(word: str) -> str:
     """
     Lookup a word in the dictionary.
@@ -844,7 +825,7 @@ def lookup_word(word: str) -> str:
     """
     word_lower = word.lower().strip()
     
-    # First try ECDICT for modern definitions
+    # Try ECDICT for modern definitions
     ecdict = load_ecdict_index()
     if ecdict and word_lower in ecdict:
         entry = ecdict[word_lower]
@@ -858,14 +839,6 @@ def lookup_word(word: str) -> str:
         entry = ecdict[clean_word]
         definition = entry.get("def", "")
         return f"**{clean_word}**\n\n{definition}"
-    
-    # Fallback to GCIDE for full definitions
-    gcide = load_gcide_index()
-    if gcide and word_lower in gcide:
-        entry = gcide[word_lower]
-        headword = entry.get("headword", word)
-        definition = entry.get("def", "")
-        return f"**{headword}**\n\n{definition}"
     
     # Fallback to word list for suggestions
     if not os.path.exists(WORD_LIST_PATH):
