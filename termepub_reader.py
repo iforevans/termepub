@@ -7,8 +7,9 @@ Features:
 - Inline CSS styling (bold, underline, italic, colors)
 - Chapter navigation, bookmarks, file picker with live search
 - State persistence across sessions
+- Proper word wrapping (no mid-word breaks)
 
-Version: 0.4.9
+Version: 0.4.10
 """
 import curses
 import hashlib
@@ -25,7 +26,7 @@ from html.parser import HTMLParser
 from typing import Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 
-__version__ = "0.4.9"
+__version__ = "0.4.10"
 
 CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "termepub")
 STATE_FILE = os.path.join(CONFIG_DIR, "state.json")
@@ -1490,27 +1491,52 @@ class ReaderUI:
                 current_width += len(text)
                 return
             
-            # Fragment doesn't fit - need to split
+            # Fragment doesn't fit - need to split at word boundary
             remaining_space = width - current_width
             
             if remaining_space > 0:
+                # Find the last space within remaining_space to split at word boundary
+                split_point = remaining_space
+                # Look for a space to break at (don't split words in the middle)
+                last_space = text.rfind(' ', 0, remaining_space)
+                if last_space > 0:
+                    split_point = last_space
+                
                 # Add what fits to current line
-                fragment = text[:remaining_space]
+                fragment = text[:split_point].rstrip()
                 current_line.append((fragment, attr))
-                current_width += remaining_space
+                current_width += len(fragment)
                 flush_line()
                 
-                # Continue with remainder
-                text = text[remaining_space:]
+                # Continue with remainder (skip the space we broke at)
+                text = text[split_point:].lstrip()
             
             # Now process the rest of the fragment on new lines
             while text:
-                # Take as much as fits
-                chunk = text[:width]
+                if len(text) <= width:
+                    # Rest fits on one line
+                    current_line.append((text, attr))
+                    current_width = len(text)
+                    flush_line()
+                    break
+                
+                # Find word boundary for long lines
+                split_point = width
+                last_space = text.rfind(' ', 0, width)
+                if last_space > 0:
+                    split_point = last_space
+                
+                chunk = text[:split_point].rstrip()
+                if not chunk:
+                    # No space found - force break (very long word)
+                    chunk = text[:width]
+                    text = text[width:]
+                else:
+                    text = text[split_point:].lstrip()
+                
                 current_line.append((chunk, attr))
                 current_width = len(chunk)
                 flush_line()
-                text = text[width:]
         
         # Process all segments, deduplicating near-duplicates
         # (e.g., "CHAPTER ONE" appearing twice with only blank lines between)
