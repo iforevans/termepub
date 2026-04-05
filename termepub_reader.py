@@ -9,8 +9,9 @@ Features:
 - State persistence across sessions
 - Proper word wrapping (no mid-word breaks)
 - Justified text mode toggle (x key)
+- Word selection mode for dictionary lookup (d key + arrow keys)
 
-Version: 0.4.11
+Version: 0.4.13
 """
 import curses
 import hashlib
@@ -43,6 +44,9 @@ STATE_FILE = os.path.join(CONFIG_DIR, "state.json")
 # Footer format string for status bar display
 FOOTER_FORMAT = (
     "C {}/{} P {}/{} {}% | L/R page | U/D chap | t TOC | / find | Bmark | Open | Mode | Head | j{justify} | d dict | Quit |"
+)
+FOOTER_FORMAT_SELECTION = (
+    " SELECTION MODE - Arrow keys to navigate, 'd' to lookup, Esc to cancel "
 )
 
 
@@ -1215,6 +1219,12 @@ class ReaderUI:
         # Color pair cache for dynamic text colors: color_idx -> pair_number
         self.color_pair_cache: Dict[int, int] = {}
         self.next_color_pair: int = 8  # Start after pairs 1-7 (reserved for UI)
+        # Word selection mode for dictionary lookup
+        self.in_selection_mode = False
+        self.selected_line = 0            # Line number of selected word (0-based from page body)
+        self.selected_word_start = 0      # Character start position within line
+        self.selected_word_end = 0        # Character end position within line
+        self.all_word_positions: List[Tuple[int, int, int]] = []  # List of (line, start, end) for all words
         self.load_book(book, use_saved_position=True)
 
     def load_book(self, book: EpubBook, use_saved_position: bool = True):
@@ -1395,57 +1405,171 @@ class ReaderUI:
         self.show_info_popup("Text", f"Text alignment: {mode}")
 
     def dictionary_lookup(self):
-        """Prompt for a word and show dictionary info."""
-        # Get current word under cursor or prompt
-        self.stdscr.keypad(False)
-        curses.echo()
-        curses.curs_set(1)
+        """Enter word selection mode for dictionary lookup.
         
-        try:
-            # Show prompt
-            h, w = self.stdscr.getmaxyx()
-            prompt = "Word to lookup: "
-            self.stdscr.addstr(h - 2, 0, " " * (w - 1))
-            self.stdscr.addstr(h - 2, 0, prompt)
-            self.stdscr.refresh()
+        First press 'd': Enter selection mode, highlight first word
+        Arrow keys: Move selection between words
+        Second 'd': Lookup selected word
+        Escape: Cancel selection
+        """
+        if self.in_selection_mode:
+            # Second 'd' - lookup the selected word
+            if self.selected_word_start < self.selected_word_end:
+                # Get the selected word from the styled pages (same source as extraction!)
+                styled_pages = self._get_styled_pages(self.chapter_index)
+                word = ""
+                if styled_pages and self.page_index < len(styled_pages):
+                    page = styled_pages[self.page_index]
+                    if self.selected_line < len(page):
+                        line_fragments = page[self.selected_line]
+                        # Join all fragments to get the full line text
+                        line_text = ''.join(fragment_text for fragment_text, _ in line_fragments)
+                        # Extract the selected word
+                        word = line_text[self.selected_word_start:self.selected_word_end].strip()
+                
+                if word:
+                    # Exit selection mode
+                    self.in_selection_mode = False
+                    # Lookup the word
+                    result = lookup_word(word)
+                    # Show result in a popup
+                    self.show_info_popup("Dictionary", result)
+                    # Redraw to remove highlight
+                    self.draw()
+                else:
+                    self.show_info_popup("Dictionary", "No word selected")
+                    self.in_selection_mode = False
+                    self.draw()
+            else:
+                self.in_selection_mode = False
+                self.draw()
+        else:
+            # First 'd' - enter selection mode
+            self._enter_selection_mode()
+
+    def _enter_selection_mode(self):
+        """Enter word selection mode and highlight first word on page."""
+        self.in_selection_mode = True
+        # Extract word positions from current page
+        self._extract_word_positions()
+        if self.all_word_positions:
+            # Select first word
+            line, start, end = self.all_word_positions[0]
+            self.selected_line = line
+            self.selected_word_start = start
+            self.selected_word_end = end
+            self.draw()
+        else:
+            # No words on page
+            self.in_selection_mode = False
+            self.show_info_popup("Dictionary", "No words on this page")
+
+    def _extract_word_positions(self):
+        """Extract word positions (line_num, start_char, end_char) from current page.
+        
+        Stores tuples of (line_number, char_start, char_end) for each word.
+        line_number is relative to the page (0-based from top of page body).
+        char_start and char_end are positions within that line.
+        
+        IMPORTANT: Uses the same styled pages as rendering to ensure positions match!
+        """
+        self.all_word_positions = []
+        
+        # Get the styled pages (same as what draw() uses)
+        styled_pages = self._get_styled_pages(self.chapter_index)
+        if not styled_pages:
+            return
             
-            # Read input
-            word = ""
-            while True:
-                ch = self.stdscr.getch()
-                if ch == 27:  # Escape
-                    word = None
-                    break
-                elif ch in (10, 13):  # Enter
-                    break
-                elif ch == 127 or ch == 8:  # Backspace
-                    if word:
-                        word = word[:-1]
-                        self.stdscr.addstr(h - 2, 0, " " * (w - 1))
-                        self.stdscr.addstr(h - 2, 0, prompt + word)
-                        self.stdscr.refresh()
-                elif 32 <= ch <= 126:  # Printable
-                    word += chr(ch)
-                    self.stdscr.addstr(h - 2, 0, " " * (w - 1))
-                    self.stdscr.addstr(h - 2, 0, prompt + word)
-                    self.stdscr.refresh()
-        finally:
-            curses.noecho()
-            curses.curs_set(0)
-            self.stdscr.keypad(True)
+        # Get the current page
+        if self.page_index >= len(styled_pages):
+            return
+        page = styled_pages[self.page_index]
         
-        if word is None:
-            return  # Cancelled
+        # Extract word positions from each line
+        for line_num, line_fragments in enumerate(page):
+            # Join all fragments to get the plain line text
+            line_text = ''.join(fragment_text for fragment_text, _ in line_fragments)
+            
+            word_start = None
+            for i, ch in enumerate(line_text):
+                # Word characters: alphanumeric only
+                if ch.isalnum():
+                    if word_start is None:
+                        word_start = i
+                else:
+                    if word_start is not None:
+                        # Word ended - store as (line_num, start, end)
+                        self.all_word_positions.append((line_num, word_start, i))
+                        word_start = None
+            # Handle word at end of line
+            if word_start is not None:
+                self.all_word_positions.append((line_num, word_start, len(line_text)))
+
+    def _navigate_selection(self, direction: str):
+        """Navigate word selection with arrow keys.
         
-        if not word.strip():
-            self.show_info_popup("Dictionary", "No word entered")
+        Left/Right: Move to previous/next word
+        Up/Down: Move to word on previous/next line (or closest if different line length)
+        """
+        if not self.in_selection_mode or not self.all_word_positions:
+            return
+            
+        # Find current selection index
+        current_idx = None
+        for i, pos in enumerate(self.all_word_positions):
+            if pos == (self.selected_line, self.selected_word_start, self.selected_word_end):
+                current_idx = i
+                break
+        
+        if current_idx is None:
+            # Default to first word
+            if self.all_word_positions:
+                line, start, end = self.all_word_positions[0]
+                self.selected_line = line
+                self.selected_word_start = start
+                self.selected_word_end = end
+                self.draw()
             return
         
-        # Lookup the word
-        result = lookup_word(word.strip())
+        current_line, current_start, current_end = self.all_word_positions[current_idx]
         
-        # Show result in a popup
-        self.show_info_popup("Dictionary", result)
+        # Navigate based on direction
+        if direction == "left" and current_idx > 0:
+            # Previous word
+            line, start, end = self.all_word_positions[current_idx - 1]
+            self.selected_line = line
+            self.selected_word_start = start
+            self.selected_word_end = end
+        elif direction == "right" and current_idx < len(self.all_word_positions) - 1:
+            # Next word
+            line, start, end = self.all_word_positions[current_idx + 1]
+            self.selected_line = line
+            self.selected_word_start = start
+            self.selected_word_end = end
+        elif direction == "up":
+            # Find word on previous line
+            target_line = current_line - 1
+            # Search backwards for first word on target line
+            for i in range(current_idx - 1, -1, -1):
+                line, start, end = self.all_word_positions[i]
+                if line <= target_line:
+                    self.selected_line = line
+                    self.selected_word_start = start
+                    self.selected_word_end = end
+                    break
+        elif direction == "down":
+            # Find word on next line
+            target_line = current_line + 1
+            # Search forwards for first word on target line
+            for i in range(current_idx + 1, len(self.all_word_positions)):
+                line, start, end = self.all_word_positions[i]
+                if line >= target_line:
+                    self.selected_line = line
+                    self.selected_word_start = start
+                    self.selected_word_end = end
+                    break
+        
+        self.draw()
 
     def get_overall_progress(self) -> Tuple[int, int]:
         """Return (current_page, total_pages) for the entire book."""
@@ -1899,6 +2023,34 @@ class ReaderUI:
             plain_pages.append(plain_page)
         return plain_pages
 
+    def _get_page_text(self) -> str:
+        """Get plain text content of current page (for word selection)."""
+        h, w = self.stdscr.getmaxyx()
+        reserved = 2 if self.show_header else 1
+        body_h = max(3, h - reserved - 1)  # -1 for footer
+        body_w = max(20, w - 1)
+        
+        # Get wrapped lines for current chapter
+        chapter_text = self.book.chapters[self.chapter_index]
+        lines = self._wrap_text(chapter_text, body_w)
+        
+        # Calculate which lines are on current page
+        start_line = self.page_index * body_h
+        end_line = start_line + body_h
+        page_lines = lines[start_line:end_line]
+        
+        return '\n'.join(page_lines)
+
+    def _calculate_selection_display(self) -> Tuple[int, int, int]:
+        """Calculate display position (line_num, start_col, end_col) for selected word.
+        
+        Returns tuple of (line number from body_start, start column, end column).
+        """
+        # We already have the line number and column positions
+        # Just need to add body_start offset for the display line
+        body_start = 1 if self.show_header else 0
+        return (self.selected_line + body_start, self.selected_word_start, self.selected_word_end)
+
     def draw(self):
         self.stdscr.erase()
         if self.has_colors:
@@ -1918,39 +2070,88 @@ class ReaderUI:
             except curses.error:
                 pass  # Terminal too narrow - skip header
         
+        # If in selection mode, get plain text to highlight selected word
+        selection_highlight = None  # (line_num, start_col, end_col)
+        if self.in_selection_mode:
+            # Validate selection bounds before highlighting
+            if (self.selected_word_start >= 0 and 
+                self.selected_word_end > self.selected_word_start and
+                self.selected_line >= 0):
+                selection_highlight = self._calculate_selection_display()
+        
         # Render each line with its fragments (each fragment can have different style)
         for idx, line_fragments in enumerate(page, start=body_start):
             if idx >= h - 1:
                 break
             
-            # Render all fragments in this line sequentially
-            x = 0
-            for fragment_text, attr in line_fragments:
-                if x >= w - 1:
-                    break
-                try:
-                    # Add this fragment at current position
-                    remaining_width = w - 1 - x
-                    self.stdscr.addnstr(idx, x, fragment_text, remaining_width, attr)
-                    x += len(fragment_text)
-                except curses.error:
-                    # Terminal too narrow for remaining fragments
-                    break
+            # Check if this line has a selection highlight
+            line_has_selection = (selection_highlight and selection_highlight[0] == idx)
+            sel_start, sel_end = None, None
+            if line_has_selection:
+                sel_start, sel_end = selection_highlight[1], selection_highlight[2]
+            
+            # If in selection mode on this line, render character-by-character for precise highlighting
+            if line_has_selection and sel_start is not None:
+                # Reconstruct the full line text
+                full_line_text = ''.join(fragment_text for fragment_text, _ in line_fragments)
+                
+                # Render each character, applying reverse video to selected range
+                for char_idx, char in enumerate(full_line_text):
+                    if char_idx >= w - 1:
+                        break
+                    
+                    # Check if this character is in the selection range
+                    is_selected = (sel_start <= char_idx < sel_end)
+                    
+                    # Find the original fragment's attribute for this character
+                    frag_pos = 0
+                    attr = curses.A_NORMAL
+                    for fragment_text, frag_attr in line_fragments:
+                        if frag_pos <= char_idx < frag_pos + len(fragment_text):
+                            attr = frag_attr
+                            break
+                        frag_pos += len(fragment_text)
+                    
+                    # Add reverse video if selected
+                    if is_selected:
+                        attr |= curses.A_REVERSE
+                    
+                    try:
+                        self.stdscr.addch(idx, char_idx, char, attr)
+                    except curses.error:
+                        break
+            else:
+                # Normal rendering: use fragments as before
+                x = 0
+                for fragment_text, attr in line_fragments:
+                    if x >= w - 1:
+                        break
+                    
+                    try:
+                        remaining_width = w - 1 - x
+                        self.stdscr.addnstr(idx, x, fragment_text, remaining_width, attr)
+                        x += len(fragment_text)
+                    except curses.error:
+                        break
         
         # Get overall book progress
         current_page, total_pages = self.get_overall_progress()
         progress_pct = int((current_page / total_pages) * 100) if total_pages > 0 else 0
         
-        # Compact footer for smaller screens
-        justify_status = " ON" if self.justify_text else " OFF"
-        footer = FOOTER_FORMAT.format(
-            self.chapter_index + 1,
-            len(self.book.chapters),
-            current_page,
-            total_pages,
-            progress_pct,
-            justify=justify_status,
-        )
+        # Show selection mode footer or normal footer
+        if self.in_selection_mode:
+            footer = FOOTER_FORMAT_SELECTION
+        else:
+            # Compact footer for smaller screens
+            justify_status = " ON" if self.justify_text else " OFF"
+            footer = FOOTER_FORMAT.format(
+                self.chapter_index + 1,
+                len(self.book.chapters),
+                current_page,
+                total_pages,
+                progress_pct,
+                justify=justify_status,
+            )
         
         try:
             self.stdscr.addnstr(h - 1, 0, footer.ljust(max(0, w - 1)), w - 1, self.footer_attr)
@@ -1976,6 +2177,25 @@ class ReaderUI:
             curses.curs_set(0)
 
     def handle_key(self, ch: int):
+        # Handle selection mode first
+        if self.in_selection_mode:
+            if ch == ord("d") or ch == ord("D"):
+                # Second 'd' - lookup selected word
+                self.dictionary_lookup()
+            elif ch == 27:  # Escape
+                # Cancel selection mode
+                self.in_selection_mode = False
+                self.draw()
+            elif ch == curses.KEY_LEFT:
+                self._navigate_selection("left")
+            elif ch == curses.KEY_RIGHT:
+                self._navigate_selection("right")
+            elif ch == curses.KEY_UP:
+                self._navigate_selection("up")
+            elif ch == curses.KEY_DOWN:
+                self._navigate_selection("down")
+            return  # Don't process other keys in selection mode
+        
         if ch in (ord("q"), ord("Q")):
             self.running = False
         elif ch == curses.KEY_RIGHT:

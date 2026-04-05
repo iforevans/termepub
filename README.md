@@ -2,7 +2,7 @@
 
 A terminal-based (NCurses) ePUB reader with a clean, keyboard-driven interface. Built for offline reading in terminal environments.
 
-**Version:** 0.4.12 (2026-04-04)
+**Version:** 0.4.13 (2026-04-05)
 
 ## Features
 
@@ -17,6 +17,7 @@ A terminal-based (NCurses) ePUB reader with a clean, keyboard-driven interface. 
 - **Justified Text:** Toggle justified text alignment (j key) - *v0.4.11*
 - **Proper Word Wrapping:** No mid-word breaks - *v0.4.10*
 - **Dictionary Lookup:** Built-in dictionary with 160K words (d key) - *v0.4.12*
+- **Word Selection Mode:** Visual word selection with arrow keys - *v0.4.13*
 
 ## Controls
 
@@ -31,11 +32,17 @@ A terminal-based (NCurses) ePUB reader with a clean, keyboard-driven interface. 
 | `s` | In picker - start live search/filter |
 | `j` | In picker - jump to letter |
 | `j` | In reader - toggle justified text |
-| `d` | Dictionary lookup (press on highlighted word) - *v0.4.12* |
+| `d` | Dictionary lookup (selection mode) - *v0.4.13* |
 | `m` | Toggle theme |
 | `h` | Toggle header |
 | `g` | Toggle heading style (bold/reverse) |
 | `q` | Quit |
+
+**Dictionary Selection Mode (v0.4.13):**
+1. Press `d` to enter selection mode (first word highlighted)
+2. Use arrow keys (←/→/↑/↓) to navigate between words
+3. Press `d` again to look up the highlighted word
+4. Press `Esc` to cancel selection
 
 ## Usage
 
@@ -100,6 +107,21 @@ Pair programmed with my OpenClaw Agent Sparky ⚡. Using local Qwen 27B running 
 ---
 
 ## Recent Changes
+
+### v0.4.13 (2026-04-05) - Word Selection Mode
+
+**Features:**
+- **Visual word selection:** Press `d` enters selection mode with reverse-video highlight
+- **Arrow key navigation:** ←/→ move between words, ↑/↓ move to words on adjacent lines
+- **Precise highlighting:** Character-by-character rendering ensures only selected word is highlighted
+- **Instant lookup:** Press `d` again to look up the highlighted word
+- **Escape to cancel:** Press `Esc` to exit selection mode without lookup
+
+**Technical:**
+- Word positions extracted from styled pages (same source as rendering)
+- Positions stored as `(line_num, start_col, end_col)` for accurate mapping
+- Selection state: `in_selection_mode`, `selected_line`, `selected_word_start`, `selected_word_end`
+- Character-by-character rendering in selection mode for precise highlight boundaries
 
 ### v0.4.12 (2026-04-04) - Dictionary Lookup
 
