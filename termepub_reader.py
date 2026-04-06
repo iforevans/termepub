@@ -42,7 +42,7 @@ CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "termepub")
 STATE_FILE = os.path.join(CONFIG_DIR, "state.json")
 
 # Footer format string for status bar display (simplified - just position info)
-FOOTER_FORMAT = "C {}/{} P {}/{} {}%"
+FOOTER_FORMAT = "Chapter {}/{} | Page {}/{} | {}% | h=help"
 FOOTER_FORMAT_SELECTION = (
     " SELECTION MODE - Arrow keys to navigate, Enter to lookup, Esc to cancel "
 )
@@ -1776,34 +1776,34 @@ class ReaderUI:
         """Display a help dialog with all key bindings."""
         help_text = """
 READER MODE:
-  ← / →    Previous / Next page
-  ↑ / ↓    Previous / Next chapter
-  t        Table of Contents
-  /        Search
-  b        Set bookmark
-  o        Open file
-  m        Toggle theme (light/dark)
-  H        Toggle header visibility
-  j        Toggle justified text
-  d        Dictionary (visual selection)
-  ?        Dictionary (type word)
-  h        Show this help
-  q        Quit
+  Left/Right  Previous / Next page
+  Up/Down     Previous / Next chapter
+  t           Table of Contents
+  /           Search
+  b           Set bookmark
+  o           Open file
+  m           Toggle theme (light/dark)
+  H           Toggle header visibility
+  j           Toggle justified text
+  d           Dictionary (visual selection)
+  ?           Dictionary (type word)
+  h           Show this help
+  q           Quit
 
 SELECTION MODE (press d):
-  ← / →    Move selection
-  Enter    Lookup selected word
-  Esc      Cancel
+  Left/Right  Move selection
+  Enter       Lookup selected word
+  Esc         Cancel
 
 TOC MODE (press t):
-  ← / →    Navigate chapters
-  Enter    Go to chapter
-  Esc      Cancel
+  Left/Right  Navigate chapters
+  Enter       Go to chapter
+  Esc         Cancel
 
 SEARCH MODE (press /):
-  Type     Enter search term
-  Enter    Search
-  Esc      Cancel
+  Type        Enter search term
+  Enter       Search
+  Esc         Cancel
 """
         self.show_info_popup("Help (press any key to continue)", help_text.strip())
     

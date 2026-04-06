@@ -119,8 +119,9 @@ Pair programmed with my OpenClaw Agent Sparky ⚡. Using local Qwen 27B running 
 
 **Changes:**
 - **Help dialog (`h` key):** Shows all key bindings in a nicely formatted popup
-- **Clean status bar:** Footer now only shows position info (chapter, page, percentage)
+- **Clean status bar:** Footer now shows `Chapter X/Y | Page A/B | Z% | h=help`
 - **Header toggle:** Moved to `H` (uppercase) to free up `h` for help
+- **Fixed Unicode rendering:** Help dialog uses ASCII instead of arrow symbols
 - All key bindings documented in one place
 
 **Rationale:** The status bar was getting crowded with too many key hints. Moving them to a help dialog keeps the UI clean while making it easy to look up controls.
