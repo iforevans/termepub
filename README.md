@@ -108,13 +108,20 @@ Pair programmed with my OpenClaw Agent Sparky ⚡. Using local Qwen 27B running 
 
 ## Recent Changes
 
+### v0.4.14 (2026-04-06) - Enter Key to Confirm Selection
+
+**Improvement:**
+- **More intuitive confirmation:** Press `Enter` to look up selected word (instead of double-pressing `d`)
+- **Updated footer:** Selection mode now shows "Enter to lookup" instead of "'d' to lookup"
+- **Standard UI pattern:** `Enter` to confirm is more familiar and expected by users
+
 ### v0.4.13 (2026-04-05) - Word Selection Mode
 
 **Features:**
 - **Visual word selection:** Press `d` enters selection mode with reverse-video highlight
 - **Arrow key navigation:** ←/→ move between words, ↑/↓ move to words on adjacent lines
 - **Precise highlighting:** Character-by-character rendering ensures only selected word is highlighted
-- **Instant lookup:** Press `d` again to look up the highlighted word
+- **Instant lookup:** Press `Enter` to look up the highlighted word (changed from `d` in v0.4.14)
 - **Escape to cancel:** Press `Esc` to exit selection mode without lookup
 
 **Technical:**
