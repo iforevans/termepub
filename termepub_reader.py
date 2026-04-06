@@ -29,7 +29,7 @@ from html.parser import HTMLParser
 from typing import Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 
-__version__ = "0.4.14"
+__version__ = "0.4.15"
 
 # Dictionary configuration
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -43,7 +43,7 @@ STATE_FILE = os.path.join(CONFIG_DIR, "state.json")
 
 # Footer format string for status bar display
 FOOTER_FORMAT = (
-    "C {}/{} P {}/{} {}% | L/R page | U/D chap | t TOC | / find | Bmark | Open | Mode | Head | j{justify} | d dict | Quit |"
+    "C {}/{} P {}/{} {}% | L/R page | U/D chap | t TOC | / find | Bmark | Open | Mode | Head | j{justify} | d dict sel | ? dict | Quit |"
 )
 FOOTER_FORMAT_SELECTION = (
     " SELECTION MODE - Arrow keys to navigate, Enter to lookup, Esc to cancel "
@@ -1464,6 +1464,59 @@ class ReaderUI:
             self.in_selection_mode = False
             self.show_info_popup("Dictionary", "No words on this page")
 
+    def dictionary_prompt(self):
+        """Prompt for a word and show dictionary info (direct lookup without selection)."""
+        # Get word from user prompt
+        self.stdscr.keypad(False)
+        curses.echo()
+        curses.curs_set(1)
+        
+        try:
+            # Show prompt
+            h, w = self.stdscr.getmaxyx()
+            prompt = "Word to lookup: "
+            self.stdscr.addstr(h - 2, 0, " " * (w - 1))
+            self.stdscr.addstr(h - 2, 0, prompt)
+            self.stdscr.refresh()
+            
+            # Read input
+            word = ""
+            while True:
+                ch = self.stdscr.getch()
+                if ch == 27:  # Escape
+                    word = None
+                    break
+                elif ch in (10, 13):  # Enter
+                    break
+                elif ch == 127 or ch == 8:  # Backspace
+                    if word:
+                        word = word[:-1]
+                        self.stdscr.addstr(h - 2, 0, " " * (w - 1))
+                        self.stdscr.addstr(h - 2, 0, prompt + word)
+                        self.stdscr.refresh()
+                elif 32 <= ch <= 126:  # Printable
+                    word += chr(ch)
+                    self.stdscr.addstr(h - 2, 0, " " * (w - 1))
+                    self.stdscr.addstr(h - 2, 0, prompt + word)
+                    self.stdscr.refresh()
+        finally:
+            curses.noecho()
+            curses.curs_set(0)
+            self.stdscr.keypad(True)
+        
+        if word is None:
+            return  # Cancelled
+        
+        if not word.strip():
+            self.show_info_popup("Dictionary", "No word entered")
+            return
+        
+        # Lookup the word
+        result = lookup_word(word.strip())
+        
+        # Show result in a popup
+        self.show_info_popup("Dictionary", result)
+
     def _extract_word_positions(self):
         """Extract word positions (line_num, start_char, end_char) from current page.
         
@@ -2228,6 +2281,8 @@ class ReaderUI:
             self.toggle_justify()
         elif ch in (ord("d"), ord("D")):
             self.dictionary_lookup()
+        elif ch == ord("?"):
+            self.dictionary_prompt()
         elif ch == curses.KEY_RESIZE:
             self.pages_cache.clear()
             self._ensure_page_in_range()

@@ -2,7 +2,7 @@
 
 A terminal-based (NCurses) ePUB reader with a clean, keyboard-driven interface. Built for offline reading in terminal environments.
 
-**Version:** 0.4.14 (2026-04-06)
+**Version:** 0.4.15 (2026-04-06)
 
 ## Features
 
@@ -18,6 +18,7 @@ A terminal-based (NCurses) ePUB reader with a clean, keyboard-driven interface. 
 - **Proper Word Wrapping:** No mid-word breaks - *v0.4.10*
 - **Dictionary Lookup:** Built-in dictionary with 160K words (d key) - *v0.4.12*
 - **Word Selection Mode:** Visual word selection with arrow keys - *v0.4.13*
+- **Direct Dictionary Prompt:** Type any word to lookup (? key) - *v0.4.15*
 
 ## Controls
 
@@ -31,8 +32,9 @@ A terminal-based (NCurses) ePUB reader with a clean, keyboard-driven interface. 
 | `o` | Open book (file picker) |
 | `s` | In picker - start live search/filter |
 | `j` | In picker - jump to letter |
-| `j` | In reader - toggle justified text |
-| `d` | Dictionary lookup (selection mode) - *v0.4.13* |
+| `j` | In reader - toggle justified text - *v0.4.11* |
+| `d` | Dictionary selection mode (visual word selection) - *v0.4.13* |
+| `?` | Dictionary lookup prompt (type any word) - *v0.4.15* |
 | `m` | Toggle theme |
 | `h` | Toggle header |
 | `g` | Toggle heading style (bold/reverse) |
@@ -107,6 +109,13 @@ Pair programmed with my OpenClaw Agent Sparky ⚡. Using local Qwen 27B running 
 ---
 
 ## Recent Changes
+
+### v0.4.15 (2026-04-06) - Direct Dictionary Prompt
+
+**New Feature:**
+- **Direct word lookup:** Press `?` to prompt for any word to look up (not just words on screen)
+- **Separate from selection mode:** `d` is for visual selection, `?` is for typing any word
+- **Full input support:** Type word, use Backspace, Enter to lookup, Escape to cancel
 
 ### v0.4.14 (2026-04-06) - Enter Key to Confirm Selection
 
