@@ -2,7 +2,7 @@
 
 A terminal-based (NCurses) ePUB reader with a clean, keyboard-driven interface. Built for offline reading in terminal environments.
 
-**Version:** 0.5.1 (2026-04-06)
+**Version:** 0.5.2 (2026-07-12)
 
 ## Features
 
@@ -112,6 +112,21 @@ Pair programmed with my OpenClaw Agent Sparky ⚡. Using local Qwen 27B running 
 ---
 
 ## Recent Changes
+
+### v0.5.2 (2026-07-12) - Bug Fixes & Performance
+
+**Bug Fixes:**
+- **ZipFile resource leak:** `EpubBook` now properly closes its underlying ZipFile handle. Added `close()` method and `__del__` for cleanup. Switching books via the file picker no longer leaks file handles.
+- **`paragraphs.index(para)` O(n) bug in popup renderer:** Replaced with enumerate-based index tracking. Fixes incorrect behavior with duplicate paragraph text and eliminates quadratic cost.
+- **Duplicate `import os` inside `main()`:** Removed redundant local import (already at module level).
+- **Shebang portability:** Changed from `#!/usr/local/bin/python3.9` to `#!/usr/bin/env python3`.
+
+**Performance:**
+- **Dictionary fallback uses `set` instead of linear file scan:** `words.txt` is loaded once into a `set` on first lookup (~466K words, O(1) membership). Previously did a sequential line-by-line scan on the main thread that froze the UI.
+- **Cache key now includes `justify_text` and `theme`:** Eliminates fragile manual cache clearing on toggle. The styled pages cache now invalidates naturally when these settings change.
+
+**Cleanup:**
+- Removed `*.epub` from `.gitignore` — test EPUBs were never tracked in git.
 
 ### v0.5.1 (2026-04-06) - Help Dialog & Clean Status Bar
 

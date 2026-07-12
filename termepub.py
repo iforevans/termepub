@@ -1,4 +1,4 @@
-#!/usr/local/bin/python3.9
+#!/usr/bin/env python3
 """
 termepub.py - Terminal-based EPUB reader with inline CSS styling support.
 
@@ -8,10 +8,10 @@ Features:
 - Chapter navigation, bookmarks, file picker with live search
 - State persistence across sessions
 - Proper word wrapping (no mid-word breaks)
-- Justified text mode toggle (x key)
+- Justified text mode toggle (j key)
 - Word selection mode for dictionary lookup (d key + arrow keys)
 
-Version: 0.5.1
+Version: 0.5.2
 """
 import curses
 import hashlib
@@ -29,7 +29,7 @@ from html.parser import HTMLParser
 from typing import Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 
-__version__ = "0.5.1"
+__version__ = "0.5.2"
 
 # Dictionary configuration
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -37,6 +37,7 @@ DICT_DIR = os.path.join(os.path.expanduser("~"), ".config", "termepub")
 WORD_LIST_PATH = os.path.join(DICT_DIR, "words.txt")
 EC_DICT_INDEX_PATH = os.path.join(SCRIPT_DIR, "ecdict_index.json")
 _ecdict_index = None
+_word_set: Optional[set] = None
 
 CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "termepub")
 STATE_FILE = os.path.join(CONFIG_DIR, "state.json")
@@ -469,6 +470,20 @@ class EpubBook:
         self._load_chapters()  # Then load chapters (can use TOC titles)
         self._fill_missing_toc_entries()
 
+    def close(self):
+        """Close the underlying ZipFile to release the file handle."""
+        zf = getattr(self, 'zf', None)
+        if zf is not None:
+            try:
+                zf.close()
+            except Exception:
+                pass
+            object.__setattr__(self, 'zf', None)
+
+    def __del__(self):
+        """Ensure ZipFile is closed when the book is garbage collected."""
+        self.close()
+
     def _read_xml(self, member: str) -> ET.Element:
         data = self.zf.read(member)
         return ET.fromstring(data)
@@ -808,16 +823,35 @@ def load_ecdict_index():
     global _ecdict_index
     if _ecdict_index is not None:
         return _ecdict_index
-    
+
     if not os.path.exists(EC_DICT_INDEX_PATH):
         return None
-    
+
     try:
         with open(EC_DICT_INDEX_PATH, 'r') as f:
             _ecdict_index = json.load(f)
         return _ecdict_index
     except Exception:
         return None
+
+
+def load_word_set():
+    """Load word list into a set for O(1) lookups. Cached after first load."""
+    global _word_set
+    if _word_set is not None:
+        return _word_set
+
+    if not os.path.exists(WORD_LIST_PATH):
+        _word_set = set()  # Sentinel: file doesn't exist, don't retry
+        return _word_set
+
+    try:
+        with open(WORD_LIST_PATH, 'r') as f:
+            _word_set = {line.strip().lower() for line in f if line.strip()}
+    except Exception:
+        _word_set = set()
+
+    return _word_set
 
 
 def lookup_word(word: str) -> str:
@@ -842,39 +876,34 @@ def lookup_word(word: str) -> str:
         definition = entry.get("def", "")
         return f"**{clean_word}**\n\n{definition}"
     
-    # Fallback to word list for suggestions
-    if not os.path.exists(WORD_LIST_PATH):
+    # Fallback to word set for suggestions
+    word_set = load_word_set()
+    if not word_set:
         return f"✗ '{word}' not found\n(Dictionary not available)"
-    
-    try:
-        with open(WORD_LIST_PATH, 'r') as f:
-            lines = f.readlines()
-    except Exception:
-        return f"✗ '{word}' not found\n(Error reading dictionary)"
-    
-    # Check if word exists
-    for line in lines:
-        if line.strip().lower() == word_lower:
-            return f"✓ '{word}' found\n(No definition available)"
-    
-    # Find similar words
+
+    # Check if word exists in the set (O(1))
+    if word_lower in word_set:
+        return f"✓ '{word}' found\n(No definition available)"
+
+    # Find similar words using length-filtered subset
+    target_len = len(word_lower)
     similar = []
-    for line in lines:
-        line_word = line.strip().lower()
-        len_diff = abs(len(line_word) - len(word_lower))
-        
-        if len_diff <= 1:
-            if len_diff == 0:
-                diffs = sum(c1 != c2 for c1, c2 in zip(word_lower, line_word))
-                if 1 <= diffs <= 2:
-                    similar.append((diffs, line_word))
-            else:
-                shorter, longer = (word_lower, line_word) if len(word_lower) < len(line_word) else (line_word, word_lower)
-                for i in range(len(longer)):
-                    if longer[:i] + longer[i+1:] == shorter:
-                        similar.append((1, line_word))
-                        break
-    
+    for line_word in word_set:
+        len_diff = abs(len(line_word) - target_len)
+        if len_diff > 1:
+            continue
+
+        if len_diff == 0:
+            diffs = sum(c1 != c2 for c1, c2 in zip(word_lower, line_word))
+            if 1 <= diffs <= 2:
+                similar.append((diffs, line_word))
+        else:
+            shorter, longer = (word_lower, line_word) if len(word_lower) < len(line_word) else (line_word, word_lower)
+            for i in range(len(longer)):
+                if longer[:i] + longer[i+1:] == shorter:
+                    similar.append((1, line_word))
+                    break
+
     similar.sort()
     top_similar = [w for _, w in similar[:5]]
     
@@ -1134,7 +1163,7 @@ class ReaderUI:
         self.status_message = ""
         self.total_pages: int = 0
         self.pages_cache: Dict[Tuple[int, int, int, str], List[List[str]]] = {}
-        self.pages_attrs_cache: Dict[int, List[Tuple[List[str], List[int]]]] = {}  # Cache pages with attrs by chapter
+        self.pages_attrs_cache: Dict[Tuple, List[List[List[Tuple[str, int]]]]] = {}  # Cache pages with attrs by chapter
         self.running = True
         self.theme = self.store.get_theme()
         self.show_header = self.store.get_show_header()
@@ -1589,8 +1618,8 @@ class ReaderUI:
         # First split on newlines to preserve paragraph breaks
         paragraphs = message.split('\n')
         lines = []
-        
-        for para in paragraphs:
+
+        for para_idx, para in enumerate(paragraphs):
             for word in para.split():
                 # Break up very long words (e.g., definitions with no spaces)
                 if len(word) > max_msg_width:
@@ -1608,7 +1637,7 @@ class ReaderUI:
                 else:
                     lines.append(word)
             # Add empty line between paragraphs (if there's more content)
-            if para and paragraphs.index(para) < len(paragraphs) - 1 and any(p.strip() for p in paragraphs[paragraphs.index(para)+1:]):
+            if para and para_idx < len(paragraphs) - 1 and any(p.strip() for p in paragraphs[para_idx+1:]):
                 if not lines or lines[-1]:  # Don't add if last line is already empty
                     lines.append("")
         
@@ -1996,7 +2025,7 @@ Press any key..."""
             and each line is a list of (fragment_text, curses_attr) tuples.
         """
         h, w = self.stdscr.getmaxyx()
-        cache_key = (chapter_index, w, self.show_header)
+        cache_key = (chapter_index, w, self.show_header, self.justify_text, self.theme)
         
         if cache_key in self.pages_attrs_cache:
             return self.pages_attrs_cache[cache_key]
@@ -2393,13 +2422,15 @@ Press any key..."""
         self.show_info_popup("Bookmark", "Bookmark saved")
 
     def open_file_picker(self):
-        start_dir = os.path.dirname(self.book.path) if self.book and self.book.path else os.getcwd()
+        start_dir = os.path.dirname(self.book.path) if self.book.path else os.getcwd()
         picker = FilePicker(self.stdscr, start_dir)
         selected = picker.run()
         if not selected:
             self.show_info_popup("Load", "Load cancelled")
             return
         self._save_position()
+        # Close the old book's ZipFile before loading a new one
+        self.book.close()
         try:
             new_book = EpubBook(selected)
         except Exception as exc:
@@ -2438,8 +2469,7 @@ def usage() -> str:
 
 
 def main(argv: List[str]) -> int:
-    # FIX: Set TERM if not set or invalid (for running directly on Gemini)
-    import os
+    # Set TERM if not set or invalid (for running directly on Gemini)
     if not os.environ.get('TERM') or os.environ.get('TERM') == 'dumb':
         os.environ['TERM'] = 'xterm'
     
