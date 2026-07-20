@@ -31,6 +31,8 @@ import xml.etree.ElementTree as ET
 
 __version__ = "0.5.3"
 
+_DEBUG = os.environ.get("TERMEPUB_DEBUG", "").lower() in ("1", "true", "yes")
+
 # Dictionary configuration
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DICT_DIR = os.path.join(os.path.expanduser("~"), ".config", "termepub")
@@ -47,6 +49,23 @@ FOOTER_FORMAT = "Chapter {}/{} | Page {}/{} | {}% | h=help"
 FOOTER_FORMAT_SELECTION = (
     " SELECTION MODE - Arrow keys to navigate, Enter to lookup, Esc to cancel "
 )
+
+# Keyboard key codes (fallback values where curses.KEY_* is platform-dependent)
+KEY_ESCAPE = 27
+KEY_ENTER = 13
+KEY_LF = 10
+KEY_BACKSPACE_ALT = 127
+KEY_BACKSPACE_CTRL = 8
+KEY_PAGE_DOWN_TERMINFO = 338
+KEY_PAGE_UP_TERMINFO = 339
+
+# Curses color pair assignments
+COLOR_PAIR_DEFAULT = 1       # White on black (dark) / black on white (light)
+COLOR_PAIR_INVERSE = 2       # Opposite of default
+COLOR_PAIR_TITLE = 3         # Yellow on default (headings)
+COLOR_PAIR_INFO_POPUP = 6    # White on blue
+COLOR_PAIR_ERROR_POPUP = 7   # White on red
+FIRST_DYNAMIC_COLOR_PAIR = 8 # Starting pair for dynamic text colors
 
 # CSS named colors mapping (common ones) - module-level to avoid per-call allocation
 _NAMED_COLORS: dict = {
@@ -121,6 +140,12 @@ class StyledSegment:
     is_heading: bool = False
 
 
+def _log_curses_error(tag: str, line: int, col: int):
+    if _DEBUG:
+        import sys
+        print(f"curses.error at ({line}, {col}) in {tag}", file=sys.stderr)
+
+
 def strip_ns(tag: str) -> str:
     return tag.split("}", 1)[-1] if "}" in tag else tag
 
@@ -132,56 +157,53 @@ def norm_href(base_path: str, href: str) -> str:
     return os.path.normpath(os.path.join(os.path.dirname(base_path), clean))
 
 
+# str.translate table for single-char ASCII replacements (fast path)
+_ASCII_TRANSLATE_TABLE = str.maketrans({
+    "\u2018": "'",
+    "\u2019": "'",
+    "\u201c": '"',
+    "\u201d": '"',
+    "\u2013": "-",
+    "\u00a0": " ",
+    "\u00ad": "",
+    "\u2191": "^",
+    "\u2193": "v",
+    "\u2010": "-",
+    "\u2011": "-",
+    "\u2012": "-",
+    "\u2039": "<",
+    "\u203a": ">",
+    "\u2500": "-",
+    "\u2502": "|",
+    "\u2514": "+",
+    "\u251c": "+",
+    "\u2524": "+",
+    "\u2534": "+",
+    "\u253c": "+",
+    "\u2550": "=",
+})
+
+
 def ascii_sanitize(text: str) -> str:
     """Convert special characters to ASCII equivalents for terminal compatibility."""
-    replacements = {
-        "\u2018": "'",  # Left single quote
-        "\u2019": "'",  # Right single quote
-        "\u201c": '"',  # Left double quote
-        "\u201d": '"',  # Right double quote
-        "\u2013": "-",  # En dash
-        "\u2014": "--", # Em dash
-        "\u2026": "...",# Ellipsis
-        "\u00a0": " ",  # Non-breaking space
-        "\u00ad": "",   # Soft hyphen
-        "\u2190": "<-", # Left arrow
-        "\u2191": "^",  # Up arrow
-        "\u2192": "->", # Right arrow
-        "\u2193": "v",  # Down arrow
-        "\u2010": "-",  # Hyphen
-        "\u2011": "-",  # Non-breaking hyphen
-        "\u2012": "-",  # Figure dash
-        "\u2015": "---",# Horizontal bar
-        "\u2039": "<",  # Single left-pointing angle quotation mark
-        "\u203a": ">",  # Single right-pointing angle quotation mark
-        "\u2500": "-",  # Box drawings light horizontal
-        "\u2502": "|",  # Box drawings light vertical
-        "\u2514": "+",  # Box drawings light up and horizontal
-        "\u251c": "+",  # Box drawings light vertical and horizontal
-        "\u2524": "+",  # Box drawings light up and vertical
-        "\u2534": "+",  # Box drawings light down and horizontal
-        "\u253c": "+",  # Box drawings light vertical and horizontal
-        "\u2550": "=",  # Box drawings double horizontal
-        "\u2551": "||", # Box drawings double vertical
-        "\u2588": "##", # Full block
-        "\u2591": "::", # Light shade
-        "\u2592": "::", # Medium shade
-        "\u2593": "##", # Dark shade
-    }
-    for src, dst in replacements.items():
-        text = text.replace(src, dst)
-    
-    # Normalize and filter any remaining non-ASCII
+    text = text.translate(_ASCII_TRANSLATE_TABLE)
+    text = text.replace("\u2014", "--")
+    text = text.replace("\u2026", "...")
+    text = text.replace("\u2190", "<-")
+    text = text.replace("\u2192", "->")
+    text = text.replace("\u2015", "---")
+    text = text.replace("\u2551", "||")
+    text = text.replace("\u2588", "##")
+    text = text.replace("\u2591", "::")
+    text = text.replace("\u2592", "::")
+    text = text.replace("\u2593", "##")
     text = unicodedata.normalize("NFKC", text)
-    
-    # Replace any remaining non-ASCII with space or remove
     result = []
     for char in text:
         if ord(char) < 128:
             result.append(char)
         elif char.isspace():
             result.append(' ')
-        # Otherwise skip the character
     return ''.join(result)
 
 
@@ -984,15 +1006,15 @@ class FilePicker:
             # Handle waiting for letter mode
             if waiting_for_letter:
                 ch = self.stdscr.getch()
-                if ch == 27:  # Esc - cancel
+                if ch == KEY_ESCAPE:  # Esc - cancel
                     waiting_for_letter = False
                     self.status = "Jump cancelled"
-                elif ch == 13 or ch == 10:  # Enter - use buffered letter
+                elif ch in (KEY_ENTER, KEY_LF):  # Enter - use buffered letter
                     if waiting_letter_buffer:
                         self.jump_to_letter(waiting_letter_buffer)
                     waiting_for_letter = False
                     waiting_letter_buffer = ""
-                elif ch == 127 or ch == curses.KEY_BACKSPACE or ch == 8:  # Backspace - clear buffer
+                elif ch in (KEY_BACKSPACE_ALT, curses.KEY_BACKSPACE, KEY_BACKSPACE_CTRL):  # Backspace - clear buffer
                     waiting_letter_buffer = ""
                     self.status = "Jump: "
                 elif 32 <= ch <= 126:  # Printable character
@@ -1003,17 +1025,17 @@ class FilePicker:
             # Handle search mode
             if self.in_search_mode:
                 ch = self.stdscr.getch()
-                if ch == 27:  # Esc - cancel search
+                if ch == KEY_ESCAPE:  # Esc - cancel search
                     self.in_search_mode = False
                     search_input = ""
                     self.filter_text = ""
                     self.apply_filter()
                     self.status = "Search cancelled"
-                elif ch == 10 or ch == 13:  # Enter - exit search mode
+                elif ch in (KEY_ENTER, KEY_LF):  # Enter - exit search mode
                     self.in_search_mode = False
                     search_input = ""
                     self.status = f"Filter: {self.filter_text}" if self.filter_text else ""
-                elif ch == 127 or ch == curses.KEY_BACKSPACE or ch == 8:  # Backspace
+                elif ch in (KEY_BACKSPACE_ALT, curses.KEY_BACKSPACE, KEY_BACKSPACE_CTRL):  # Backspace
                     search_input = search_input[:-1]
                     self.filter_text = search_input
                     self.apply_filter()
@@ -1025,7 +1047,7 @@ class FilePicker:
                 continue
             
             ch = self.stdscr.getch()
-            if ch in (27, ord("q"), ord("Q")):
+            if ch in (KEY_ESCAPE, ord("q"), ord("Q")):
                 return None
             
             # Jump-to-letter mode: 'j' followed by letter
@@ -1050,9 +1072,9 @@ class FilePicker:
             elif ch in (curses.KEY_DOWN, ord("j")):
                 if self.selected + 1 < len(self.filtered_entries):
                     self.selected += 1
-            elif ch in (curses.KEY_NPAGE, 338):
+            elif ch in (curses.KEY_NPAGE, KEY_PAGE_DOWN_TERMINFO):
                 self.selected = min(len(self.filtered_entries) - 1, self.selected + max(1, self.body_height()))
-            elif ch in (curses.KEY_PPAGE, 339):
+            elif ch in (curses.KEY_PPAGE, KEY_PAGE_UP_TERMINFO):
                 self.selected = max(0, self.selected - max(1, self.body_height()))
             elif ch == curses.KEY_LEFT:
                 parent = os.path.dirname(self.current_dir)
@@ -1060,7 +1082,7 @@ class FilePicker:
                     self.current_dir = parent
                     self.selected = 0
                     self.refresh_entries()
-            elif ch in (10, 13, curses.KEY_ENTER, curses.KEY_RIGHT):
+            elif ch in (KEY_ENTER, KEY_LF, curses.KEY_ENTER, curses.KEY_RIGHT):
                 if not self.filtered_entries:
                     continue
                 _label, full, is_dir = self.filtered_entries[self.selected]
@@ -1151,7 +1173,7 @@ class ReaderUI:
         self.heading_attr = curses.A_REVERSE  # Can be changed to A_BOLD, A_ITALIC, etc.
         # Color pair cache for dynamic text colors: color_idx -> pair_number
         self.color_pair_cache: Dict[int, int] = {}
-        self.next_color_pair: int = 8  # Start after pairs 1-7 (reserved for UI)
+        self.next_color_pair: int = FIRST_DYNAMIC_COLOR_PAIR
         # Word selection mode for dictionary lookup
         self.in_selection_mode = False
         self.selected_line = 0            # Line number of selected word (0-based from page body)
@@ -1215,11 +1237,11 @@ class ReaderUI:
         try:
             curses.start_color()
             curses.use_default_colors()
-            curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_BLACK)
-            curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_WHITE)
-            curses.init_pair(3, curses.COLOR_YELLOW, -1)  # Titles (yellow on default)
-            curses.init_pair(6, curses.COLOR_WHITE, curses.COLOR_BLUE)  # Info popup
-            curses.init_pair(7, curses.COLOR_WHITE, curses.COLOR_RED)   # Error popup
+            curses.init_pair(COLOR_PAIR_DEFAULT, curses.COLOR_WHITE, curses.COLOR_BLACK)
+            curses.init_pair(COLOR_PAIR_INVERSE, curses.COLOR_BLACK, curses.COLOR_WHITE)
+            curses.init_pair(COLOR_PAIR_TITLE, curses.COLOR_YELLOW, -1)
+            curses.init_pair(COLOR_PAIR_INFO_POPUP, curses.COLOR_WHITE, curses.COLOR_BLUE)
+            curses.init_pair(COLOR_PAIR_ERROR_POPUP, curses.COLOR_WHITE, curses.COLOR_RED)
             self.has_colors = True
         except curses.error:
             self.has_colors = False
@@ -1233,12 +1255,12 @@ class ReaderUI:
             self.selected_attr = curses.A_REVERSE
             self.heading_attr = curses.A_REVERSE | curses.A_BOLD
             return
-        attr = curses.color_pair(2) if self.theme == "light" else curses.color_pair(1)
+        attr = curses.color_pair(COLOR_PAIR_INVERSE) if self.theme == "light" else curses.color_pair(COLOR_PAIR_DEFAULT)
         self.header_attr = attr
         self.footer_attr = attr
         self.selected_attr = attr
         # Yellow bold for headings (pair 3 is yellow, defined in setup_colors)
-        self.heading_attr = curses.color_pair(3) | curses.A_BOLD
+        self.heading_attr = curses.color_pair(COLOR_PAIR_TITLE) | curses.A_BOLD
 
     def styles_to_curses_attr(self, css_styles: dict) -> int:
         """Convert CSS styles dict to curses attribute flags.
@@ -1284,7 +1306,7 @@ class ReaderUI:
                         self.next_color_pair += 1
                         # Safety: limit to 256 pairs (most terminals support this)
                         if self.next_color_pair > 255:
-                            self.next_color_pair = 8  # Wrap around, will overwrite old pairs
+                             self.next_color_pair = FIRST_DYNAMIC_COLOR_PAIR
                     except curses.error:
                         # Terminal doesn't support this many color pairs, skip coloring
                         pass
@@ -1300,7 +1322,7 @@ class ReaderUI:
         self.theme = "light" if self.theme == "dark" else "dark"
         # Clear color cache so colors are re-rendered with correct background
         self.color_pair_cache.clear()
-        self.next_color_pair = 8
+        self.next_color_pair = FIRST_DYNAMIC_COLOR_PAIR
         self.store.set_theme(self.theme)
         self.store.save()
         self.pages_cache.clear()
@@ -1318,7 +1340,7 @@ class ReaderUI:
 
     def toggle_heading_style(self):
         """Toggle between yellow-bold and reverse for headings."""
-        yellow_bold = curses.color_pair(3) | curses.A_BOLD if self.has_colors else curses.A_BOLD
+        yellow_bold = curses.color_pair(COLOR_PAIR_TITLE) | curses.A_BOLD if self.has_colors else curses.A_BOLD
         reverse = curses.A_REVERSE
         if self.heading_attr == reverse:
             self.heading_attr = yellow_bold
@@ -1419,12 +1441,12 @@ class ReaderUI:
             word = ""
             while True:
                 ch = self.stdscr.getch()
-                if ch == 27:  # Escape
+                if ch == KEY_ESCAPE:  # Escape
                     word = None
                     break
-                elif ch in (10, 13):  # Enter
+                elif ch in (KEY_ENTER, KEY_LF):  # Enter
                     break
-                elif ch == 127 or ch == 8:  # Backspace
+                elif ch in (KEY_BACKSPACE_ALT, KEY_BACKSPACE_CTRL):  # Backspace
                     if word:
                         word = word[:-1]
                         self.stdscr.addstr(h - 2, 0, " " * (w - 1))
@@ -1585,7 +1607,7 @@ class ReaderUI:
         
         # Set background color
         if self.has_colors:
-            self.stdscr.bkgd(" ", curses.color_pair(2) if self.theme == "light" else curses.color_pair(1))
+            self.stdscr.bkgd(" ", curses.color_pair(COLOR_PAIR_INVERSE) if self.theme == "light" else curses.color_pair(COLOR_PAIR_DEFAULT))
         
         self.stdscr.erase()
         h, w = self.stdscr.getmaxyx()
@@ -1648,9 +1670,9 @@ class ReaderUI:
         
         # Determine popup attribute based on type
         if is_error:
-            popup_attr = curses.color_pair(7)  # White on red
+            popup_attr = curses.color_pair(COLOR_PAIR_ERROR_POPUP)
         else:
-            popup_attr = curses.color_pair(6)  # White on blue
+            popup_attr = curses.color_pair(COLOR_PAIR_INFO_POPUP)
         
         try:
             # Draw popup border (top)
@@ -1672,9 +1694,9 @@ class ReaderUI:
             # Draw title (centered, yellow bold like termgpt)
             title_line = " " + title + " "
             title_x = start_x + (popup_width - len(title_line)) // 2
-            self.stdscr.attron(curses.color_pair(3) | curses.A_BOLD)
+            self.stdscr.attron(curses.color_pair(COLOR_PAIR_TITLE) | curses.A_BOLD)
             self.stdscr.addnstr(start_y + 1, title_x, title_line[:popup_width - 2], popup_width - 2)
-            self.stdscr.attroff(curses.color_pair(3) | curses.A_BOLD)
+            self.stdscr.attroff(curses.color_pair(COLOR_PAIR_TITLE) | curses.A_BOLD)
             
             # Draw message with popup background
             msg_start_y = start_y + 2
@@ -2065,9 +2087,9 @@ Press any key..."""
     def draw(self):
         self.stdscr.erase()
         if self.has_colors:
-            self.stdscr.bkgd(" ", curses.color_pair(2) if self.theme == "light" else curses.color_pair(1))
+            self.stdscr.bkgd(" ", curses.color_pair(COLOR_PAIR_INVERSE) if self.theme == "light" else curses.color_pair(COLOR_PAIR_DEFAULT))
         h, w = self.stdscr.getmaxyx()
-        
+
         # Get styled pages directly
         styled_pages = self._get_styled_pages(self.chapter_index)
         page = styled_pages[self.page_index] if styled_pages else [[("", curses.A_NORMAL)]]
@@ -2130,6 +2152,7 @@ Press any key..."""
                     try:
                         self.stdscr.addch(idx, char_idx, char, attr)
                     except curses.error:
+                        _log_curses_error("addch", idx, char_idx)
                         break
             else:
                 # Normal rendering: use fragments as before
@@ -2137,12 +2160,13 @@ Press any key..."""
                 for fragment_text, attr in line_fragments:
                     if x >= w - 1:
                         break
-                    
+
                     try:
                         remaining_width = w - 1 - x
                         self.stdscr.addnstr(idx, x, fragment_text, remaining_width, attr)
                         x += len(fragment_text)
                     except curses.error:
+                        _log_curses_error("addnstr", idx, x)
                         break
         
         # Get overall book progress
@@ -2188,10 +2212,10 @@ Press any key..."""
     def handle_key(self, ch: int):
         # Handle selection mode first
         if self.in_selection_mode:
-            if ch == 10 or ch == curses.KEY_ENTER:  # Enter key
+            if ch in (KEY_ENTER, KEY_LF, curses.KEY_ENTER):  # Enter key
                 # Look up selected word
                 self.dictionary_lookup()
-            elif ch == 27:  # Escape
+            elif ch == KEY_ESCAPE:  # Escape
                 # Cancel selection mode
                 self.in_selection_mode = False
                 self.draw()
@@ -2215,9 +2239,9 @@ Press any key..."""
             self.next_chapter()
         elif ch == curses.KEY_UP:
             self.prev_chapter()
-        elif ch in (curses.KEY_NPAGE, 338):
+        elif ch in (curses.KEY_NPAGE, KEY_PAGE_DOWN_TERMINFO):
             self.next_page()
-        elif ch in (curses.KEY_PPAGE, 339):
+        elif ch in (curses.KEY_PPAGE, KEY_PAGE_UP_TERMINFO):
             self.prev_page()
         elif ch in (ord("t"), ord("T")):
             self.open_toc()
@@ -2289,25 +2313,25 @@ Press any key..."""
         while True:
             self._draw_toc(entries, idx)
             ch = self.stdscr.getch()
-            if ch in (ord("q"), 27):
+            if ch in (ord("q"), KEY_ESCAPE):
                 return
             if ch in (curses.KEY_DOWN, ord("j")):
                 idx = min(len(entries) - 1, idx + 1)
             elif ch in (curses.KEY_UP, ord("k")):
                 idx = max(0, idx - 1)
-            elif ch in (10, 13, curses.KEY_ENTER, curses.KEY_RIGHT):
+            elif ch in (KEY_ENTER, KEY_LF, curses.KEY_ENTER, curses.KEY_RIGHT):
                 self.chapter_index = entries[idx].spine_index
                 self.page_index = 0
                 return
-            elif ch in (curses.KEY_NPAGE, 338):
+            elif ch in (curses.KEY_NPAGE, KEY_PAGE_DOWN_TERMINFO):
                 idx = min(len(entries) - 1, idx + 10)
-            elif ch in (curses.KEY_PPAGE, 339):
+            elif ch in (curses.KEY_PPAGE, KEY_PAGE_UP_TERMINFO):
                 idx = max(0, idx - 10)
 
     def _draw_toc(self, entries: List[TocEntry], selected: int):
         self.stdscr.erase()
         if self.has_colors:
-            self.stdscr.bkgd(" ", curses.color_pair(2) if self.theme == "light" else curses.color_pair(1))
+            self.stdscr.bkgd(" ", curses.color_pair(COLOR_PAIR_INVERSE) if self.theme == "light" else curses.color_pair(COLOR_PAIR_DEFAULT))
         h, w = self.stdscr.getmaxyx()
         title = "Table of Contents - Enter/Right: open, q/Esc: back"
         try:
