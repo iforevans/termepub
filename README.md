@@ -109,10 +109,6 @@ Ifor Evans - [@iforevans](https://github.com/iforevans)
 
 ---
 
-Pair programmed with my OpenClaw Agent Sparky ⚡. Using local Qwen 27B running on an eGPU (RTX 3090/24GB)
-
----
-
 ## Recent Changes
 
 ### v0.5.4 (2026-07-20) - Performance & Code Quality
