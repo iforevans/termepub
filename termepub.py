@@ -11,7 +11,7 @@ Features:
 - Justified text mode toggle (j key)
 - Word selection mode for dictionary lookup (d key + arrow keys)
 
-Version: 0.5.2
+Version: 0.5.3
 """
 import curses
 import hashlib
@@ -29,7 +29,7 @@ from html.parser import HTMLParser
 from typing import Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 
-__version__ = "0.5.2"
+__version__ = "0.5.3"
 
 # Dictionary configuration
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -48,6 +48,52 @@ FOOTER_FORMAT_SELECTION = (
     " SELECTION MODE - Arrow keys to navigate, Enter to lookup, Esc to cancel "
 )
 
+# CSS named colors mapping (common ones) - module-level to avoid per-call allocation
+_NAMED_COLORS: dict = {
+    'black': (0, 0, 0),
+    'white': (255, 255, 255),
+    'red': (255, 0, 0),
+    'green': (0, 128, 0),
+    'blue': (0, 0, 255),
+    'yellow': (255, 255, 0),
+    'cyan': (0, 255, 255),
+    'magenta': (255, 0, 255),
+    'purple': (128, 0, 128),
+    'orange': (255, 165, 0),
+    'gray': (128, 128, 128),
+    'grey': (128, 128, 128),
+    'silver': (192, 192, 192),
+    'pink': (255, 192, 203),
+    'brown': (165, 42, 42),
+    'navy': (0, 0, 128),
+    'teal': (0, 128, 128),
+    'olive': (128, 128, 0),
+    'maroon': (128, 0, 0),
+    'lime': (0, 255, 0),
+    'aqua': (0, 255, 255),
+    'fuchsia': (255, 0, 255),
+}
+
+# 16-color ANSI palette for color matching - module-level to avoid per-call allocation
+_ANSI_COLORS = [
+    (0, 0, 0),       # 0: black
+    (170, 0, 0),     # 1: red
+    (0, 170, 0),     # 2: green
+    (170, 170, 0),   # 3: yellow
+    (0, 0, 170),     # 4: blue
+    (170, 0, 170),   # 5: magenta
+    (0, 170, 170),   # 6: cyan
+    (170, 170, 170), # 7: white
+    (85, 85, 85),    # 8: bright black (gray)
+    (255, 85, 85),   # 9: bright red
+    (85, 255, 85),   # 10: bright green
+    (255, 255, 85),  # 11: bright yellow
+    (85, 85, 255),   # 12: bright blue
+    (255, 85, 255),  # 13: bright magenta
+    (85, 255, 255),  # 14: bright cyan
+    (255, 255, 255), # 15: bright white
+]
+
 
 @dataclass
 class TocEntry:
@@ -65,13 +111,14 @@ class BookState:
 @dataclass
 class StyledSegment:
     """A text segment with associated CSS styles.
-    
+
     Each segment represents a contiguous run of text with the same styling.
     Segments are created during HTML parsing and merged when adjacent segments
     have identical styles for efficiency.
     """
     text: str
     styles: dict  # {'font_weight': 'bold', 'color': '#ff0000', ...}
+    is_heading: bool = False
 
 
 def strip_ns(tag: str) -> str:
@@ -191,36 +238,10 @@ def hex_to_16_color(hex_color: str) -> Optional[int]:
         The 16-color palette includes standard colors plus bright variants.
     """
     hex_color = hex_color.strip().lower()
-    
-    # CSS named colors mapping (common ones)
-    named_colors = {
-        'black': (0, 0, 0),
-        'white': (255, 255, 255),
-        'red': (255, 0, 0),
-        'green': (0, 128, 0),
-        'blue': (0, 0, 255),
-        'yellow': (255, 255, 0),
-        'cyan': (0, 255, 255),
-        'magenta': (255, 0, 255),
-        'purple': (128, 0, 128),
-        'orange': (255, 165, 0),
-        'gray': (128, 128, 128),
-        'grey': (128, 128, 128),
-        'silver': (192, 192, 192),
-        'pink': (255, 192, 203),
-        'brown': (165, 42, 42),
-        'navy': (0, 0, 128),
-        'teal': (0, 128, 128),
-        'olive': (128, 128, 0),
-        'maroon': (128, 0, 0),
-        'lime': (0, 255, 0),
-        'aqua': (0, 255, 255),
-        'fuchsia': (255, 0, 255),
-    }
-    
+
     # Check if it's a named color
-    if hex_color in named_colors:
-        r, g, b = named_colors[hex_color]
+    if hex_color in _NAMED_COLORS:
+        r, g, b = _NAMED_COLORS[hex_color]
     # Handle rgb() format
     elif rgb_match := re.search(r'rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)', hex_color):
         r, g, b = int(rgb_match.group(1)), int(rgb_match.group(2)), int(rgb_match.group(3))
@@ -236,32 +257,12 @@ def hex_to_16_color(hex_color: str) -> Optional[int]:
                 return None
         else:
             return None
-    
-    # 16-color ANSI palette
-    ansi_colors = [
-        (0, 0, 0),       # 0: black
-        (170, 0, 0),     # 1: red
-        (0, 170, 0),     # 2: green
-        (170, 170, 0),   # 3: yellow
-        (0, 0, 170),     # 4: blue
-        (170, 0, 170),   # 5: magenta
-        (0, 170, 170),   # 6: cyan
-        (170, 170, 170), # 7: white
-        (85, 85, 85),    # 8: bright black (gray)
-        (255, 85, 85),   # 9: bright red
-        (85, 255, 85),   # 10: bright green
-        (255, 255, 85),  # 11: bright yellow
-        (85, 85, 255),   # 12: bright blue
-        (255, 85, 255),  # 13: bright magenta
-        (85, 255, 255),  # 14: bright cyan
-        (255, 255, 255), # 15: bright white
-    ]
-    
+
     # Find closest color by Euclidean distance
     min_dist = float('inf')
     closest_idx = 0
-    
-    for idx, (ar, ag, ab) in enumerate(ansi_colors):
+
+    for idx, (ar, ag, ab) in enumerate(_ANSI_COLORS):
         dist = (r - ar) ** 2 + (g - ag) ** 2 + (b - ab) ** 2
         if dist < min_dist:
             min_dist = dist
@@ -285,6 +286,7 @@ class EpubTextExtractor(HTMLParser):
         self.pre_depth = 0
         self.list_depth = 0
         self.skip_depth = 0
+        self.heading_depth = 0  # Track nesting inside h1-h6 tags
         # Style stack for CSS inheritance: each entry is a dict of styles
         # added by a particular tag. The current style is the merge of all
         # styles in the stack. Stack discipline: push on starttag with styles,
@@ -309,7 +311,7 @@ class EpubTextExtractor(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         attrs_dict = dict(attrs)
-        if tag in {"script", "style"}:
+        if tag in {"script", "style", "head"}:
             self.skip_depth += 1
             return
         if self.skip_depth:
@@ -335,7 +337,10 @@ class EpubTextExtractor(HTMLParser):
         if tag_styles:
             self.style_stack.append(tag_styles)
 
-        if tag == "pre":
+        if tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+            self.heading_depth += 1
+            self.segments.append(StyledSegment("\n\n", self._get_current_styles().copy()))
+        elif tag == "pre":
             self.pre_depth += 1
             self.segments.append(StyledSegment("\n\n", self._get_current_styles().copy()))
         elif tag in {"ul", "ol"}:
@@ -344,8 +349,6 @@ class EpubTextExtractor(HTMLParser):
         elif tag == "li":
             indent = "  " * max(0, self.list_depth - 1)
             self.segments.append(StyledSegment(indent + "- ", self._get_current_styles().copy()))
-        elif tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
-            self.segments.append(StyledSegment("\n\n", self._get_current_styles().copy()))
         elif tag == "blockquote":
             self.segments.append(StyledSegment("\n\n", self._get_current_styles().copy()))
         elif tag == "img":
@@ -360,7 +363,7 @@ class EpubTextExtractor(HTMLParser):
             self.segments.append(StyledSegment("\n", self._get_current_styles().copy()))
 
     def handle_endtag(self, tag):
-        if tag in {"script", "style"} and self.skip_depth > 0:
+        if tag in {"script", "style", "head"} and self.skip_depth > 0:
             self.skip_depth -= 1
             return
         if self.skip_depth:
@@ -378,7 +381,8 @@ class EpubTextExtractor(HTMLParser):
         elif tag in {"ul", "ol"} and self.list_depth > 0:
             self.list_depth -= 1
             self.segments.append(StyledSegment("\n", self._get_current_styles().copy()))
-        elif tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+        elif tag in {"h1", "h2", "h3", "h4", "h5", "h6"} and self.heading_depth > 0:
+            self.heading_depth -= 1
             self.segments.append(StyledSegment("\n\n", self._get_current_styles().copy()))
         elif tag == "blockquote":
             self.segments.append(StyledSegment("\n\n", self._get_current_styles().copy()))
@@ -402,7 +406,7 @@ class EpubTextExtractor(HTMLParser):
             return
 
         # Create segment with current inherited styles
-        segment = StyledSegment(clean_text, self._get_current_styles().copy())
+        segment = StyledSegment(clean_text, self._get_current_styles().copy(), is_heading=bool(self.heading_depth))
         self.segments.append(segment)
 
     def _merge_adjacent_segments(self, segments: List[StyledSegment]) -> List[StyledSegment]:
@@ -601,23 +605,6 @@ class EpubBook:
             self.chapter_segments.append(segments)
             self.chapter_titles.append(title)
 
-    def _guess_title(self, raw_html: str, idx: int) -> str:
-        m = re.search(r"<title[^>]*>(.*?)</title>", raw_html, flags=re.I | re.S)
-        if m:
-            title = re.sub(r"\s+", " ", html.unescape(m.group(1))).strip()
-            title = ascii_sanitize(title)
-            if title:
-                return title
-        for tag in ["h1", "h2", "h3"]:
-            m = re.search(r"<%s[^>]*>(.*?)</%s>" % (tag, tag), raw_html, flags=re.I | re.S)
-            if m:
-                title = re.sub(r"<[^>]+>", "", m.group(1))
-                title = re.sub(r"\s+", " ", html.unescape(title)).strip()
-                title = ascii_sanitize(title)
-                if title:
-                    return title
-        return f"Chapter {idx + 1}"
-
     def _load_toc(self):
         nav_item = None
         ncx_item = None
@@ -801,22 +788,6 @@ class StateStore:
         return None
 
 
-def ensure_dictionary() -> bool:
-    """Ensure word list dictionary is downloaded."""
-    os.makedirs(DICT_DIR, exist_ok=True)
-    if os.path.exists(WORD_LIST_PATH):
-        return True
-    
-    try:
-        url = "https://raw.githubusercontent.com/dwyl/english-words/master/words.txt"
-        with urllib.request.urlopen(url, timeout=30) as response:
-            words = response.read().decode('utf-8')
-        with open(WORD_LIST_PATH, 'w') as f:
-            f.write(words)
-        return True
-    except Exception:
-        return False
-
 
 def load_ecdict_index():
     """Load ECDICT dictionary index from JSON file."""
@@ -885,10 +856,15 @@ def lookup_word(word: str) -> str:
     if word_lower in word_set:
         return f"✓ '{word}' found\n(No definition available)"
 
-    # Find similar words using length-filtered subset
+    # Find similar words using length-filtered subset, capped to avoid UI freeze
     target_len = len(word_lower)
     similar = []
+    max_candidates = 5000  # Cap iterations to prevent freezing on large word sets
+
     for line_word in word_set:
+        if len(similar) >= max_candidates:
+            break
+
         len_diff = abs(len(line_word) - target_len)
         if len_diff > 1:
             continue
@@ -1194,12 +1170,10 @@ class ReaderUI:
             self.chapter_index = 0
             self.page_index = 0
         self.pages_cache.clear()
-        self.pages_attrs_cache.clear()  # Clear heading cache too
-        self._ensure_page_in_range()
-        self.total_pages = self._compute_total_pages()  # Compute once
+        self.pages_attrs_cache.clear()
+        self.total_pages = self._compute_total_pages()
         self.store.set_state(self.book.path, BookState(self.chapter_index, self.page_index))
         self.store.save()
-        self.show_info_popup("Loaded", f"Loaded: {self.book.title}")
 
     def _compute_total_pages(self) -> int:
         """Compute total pages in the book (cached, doesn't change with screen resize)."""
@@ -1226,11 +1200,16 @@ class ReaderUI:
         return max(1, (len(lines) + body_h - 1) // body_h)
 
     def setup_colors(self):
+        if self.has_colors:
+            # Colors already initialized; just re-apply theme and clear cache
+            self.apply_theme()
+            self.pages_attrs_cache.clear()
+            return
         self.has_colors = False
         self.header_attr = curses.A_REVERSE
         self.footer_attr = curses.A_REVERSE
         self.selected_attr = curses.A_REVERSE
-        self.heading_attr = curses.A_REVERSE  # Can be changed to A_BOLD, A_ITALIC, etc.
+        self.heading_attr = curses.A_REVERSE
         if not curses.has_colors():
             return
         try:
@@ -1239,14 +1218,12 @@ class ReaderUI:
             curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_BLACK)
             curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_WHITE)
             curses.init_pair(3, curses.COLOR_YELLOW, -1)  # Titles (yellow on default)
-            # Popup colors
-            curses.init_pair(6, curses.COLOR_WHITE, curses.COLOR_BLUE)  # Info popup (white on blue)
-            curses.init_pair(7, curses.COLOR_WHITE, curses.COLOR_RED)   # Error popup (white on red)
+            curses.init_pair(6, curses.COLOR_WHITE, curses.COLOR_BLUE)  # Info popup
+            curses.init_pair(7, curses.COLOR_WHITE, curses.COLOR_RED)   # Error popup
             self.has_colors = True
         except curses.error:
             self.has_colors = False
         self.apply_theme()
-        # Clear styled pages cache so colors are re-computed
         self.pages_attrs_cache.clear()
 
     def apply_theme(self):
@@ -1254,14 +1231,14 @@ class ReaderUI:
             self.header_attr = curses.A_REVERSE
             self.footer_attr = curses.A_REVERSE
             self.selected_attr = curses.A_REVERSE
-            self.heading_attr = curses.A_REVERSE
+            self.heading_attr = curses.A_REVERSE | curses.A_BOLD
             return
         attr = curses.color_pair(2) if self.theme == "light" else curses.color_pair(1)
         self.header_attr = attr
         self.footer_attr = attr
         self.selected_attr = attr
-        # Use bold for headings instead of reverse (more readable)
-        self.heading_attr = curses.A_BOLD
+        # Yellow bold for headings (pair 3 is yellow, defined in setup_colors)
+        self.heading_attr = curses.color_pair(3) | curses.A_BOLD
 
     def styles_to_curses_attr(self, css_styles: dict) -> int:
         """Convert CSS styles dict to curses attribute flags.
@@ -1340,12 +1317,14 @@ class ReaderUI:
         self.show_info_popup("Header", f"Header: {'on' if self.show_header else 'off'}")
 
     def toggle_heading_style(self):
-        """Toggle between reverse and bold for headings."""
-        if self.heading_attr == curses.A_REVERSE:
-            self.heading_attr = curses.A_BOLD
-            style = "bold"
+        """Toggle between yellow-bold and reverse for headings."""
+        yellow_bold = curses.color_pair(3) | curses.A_BOLD if self.has_colors else curses.A_BOLD
+        reverse = curses.A_REVERSE
+        if self.heading_attr == reverse:
+            self.heading_attr = yellow_bold
+            style = "yellow+bold"
         else:
-            self.heading_attr = curses.A_REVERSE
+            self.heading_attr = reverse
             style = "reverse"
         self.pages_cache.clear()
         self.pages_attrs_cache.clear()
@@ -1780,8 +1759,8 @@ Press any key..."""
         curses.curs_set(0)
         self.stdscr.keypad(True)
         self.setup_colors()
-        # Draw initial screen before waiting for input
         self._ensure_page_in_range()
+        self.show_info_popup("Loaded", f"Loaded: {self.book.title}")
         self.draw()
         while self.running:
             self._ensure_page_in_range()
@@ -1974,20 +1953,25 @@ Press any key..."""
         
         for seg in segments:
             text = seg.text
-            attr = self.styles_to_curses_attr(seg.styles)
-            
+            base_attr = self.styles_to_curses_attr(seg.styles)
+            if seg.is_heading:
+                # Use heading_attr directly to avoid OR-ing two color pairs
+                attr = self.heading_attr
+            else:
+                attr = base_attr
+
             # Normalize text for comparison (strip whitespace)
             text_normalized = text.strip()
-            
+
             # Skip duplicates of last non-blank segment (handles cases like:
-            # "CHAPTER ONE" -> blank lines -> "CHAPTER ONE" again)
-            if text_normalized and text_normalized == last_nonblank_text and attr == last_nonblank_attr:
+            # "CHAPTER ONE" -> blank lines -> "CHAPTER ONE" again).
+            if text_normalized and text_normalized == last_nonblank_text and base_attr == last_nonblank_attr:
                 continue
-            
+
             # Update last non-blank tracker
             if text_normalized:
                 last_nonblank_text = text_normalized
-                last_nonblank_attr = attr
+                last_nonblank_attr = base_attr
                 last_blank_count = 0  # Reset blank counter on non-blank
             else:
                 # Handle whitespace-only segments (paragraph breaks)
@@ -2025,8 +2009,8 @@ Press any key..."""
             and each line is a list of (fragment_text, curses_attr) tuples.
         """
         h, w = self.stdscr.getmaxyx()
-        cache_key = (chapter_index, w, self.show_header, self.justify_text, self.theme)
-        
+        cache_key = (chapter_index, w, self.show_header, self.justify_text, self.theme, self.heading_attr)
+
         if cache_key in self.pages_attrs_cache:
             return self.pages_attrs_cache[cache_key]
         
@@ -2034,7 +2018,7 @@ Press any key..."""
         body_w = max(20, w - 1)
         
         segments = self.book.chapter_segments[chapter_index]
-        
+
         if not segments:
             # Fallback to plain text if no styled segments available
             chapter_text = self.book.chapters[chapter_index]
@@ -2067,24 +2051,6 @@ Press any key..."""
             plain_page = [''.join(fragment_text for fragment_text, _ in line) for line in page]
             plain_pages.append(plain_page)
         return plain_pages
-
-    def _get_page_text(self) -> str:
-        """Get plain text content of current page (for word selection)."""
-        h, w = self.stdscr.getmaxyx()
-        reserved = 2 if self.show_header else 1
-        body_h = max(3, h - reserved - 1)  # -1 for footer
-        body_w = max(20, w - 1)
-        
-        # Get wrapped lines for current chapter
-        chapter_text = self.book.chapters[self.chapter_index]
-        lines = self._wrap_text(chapter_text, body_w)
-        
-        # Calculate which lines are on current page
-        start_line = self.page_index * body_h
-        end_line = start_line + body_h
-        page_lines = lines[start_line:end_line]
-        
-        return '\n'.join(page_lines)
 
     def _calculate_selection_display(self) -> Tuple[int, int, int]:
         """Calculate display position (line_num, start_col, end_col) for selected word.
@@ -2391,29 +2357,19 @@ Press any key..."""
         start_ch = self.chapter_index
         for offset in range(len(self.book.chapters)):
             ch_idx = (start_ch + offset) % len(self.book.chapters)
-            text = ascii_sanitize(self.book.chapters[ch_idx]).lower()
-            pos = text.find(q)
-            if pos == -1:
-                continue
-            self.chapter_index = ch_idx
-            self.page_index = self._page_for_char_offset(ch_idx, pos)
-            self.show_info_popup("Search", "Found in chapter %d" % (ch_idx + 1))
-            return True
+            # Search against the styled pages that are actually rendered,
+            # so the page calculation matches what the user sees.
+            styled_pages = self._get_styled_pages(ch_idx)
+            for page_idx, page in enumerate(styled_pages):
+                for line_fragments in page:
+                    line_text = ''.join(fragment_text for fragment_text, _ in line_fragments).lower()
+                    pos = line_text.find(q)
+                    if pos != -1:
+                        self.chapter_index = ch_idx
+                        self.page_index = page_idx
+                        self.show_info_popup("Search", "Found in chapter %d" % (ch_idx + 1))
+                        return True
         return False
-
-    def _page_for_char_offset(self, chapter_index: int, char_offset: int) -> int:
-        h, w = self.stdscr.getmaxyx()
-        reserved = 2 if self.show_header else 1
-        body_h = max(3, h - reserved)
-        lines = self._wrap_text(self.book.chapters[chapter_index], max(20, w - 1))
-        count = 0
-        line_index = 0
-        for i, line in enumerate(lines):
-            count += len(line) + 1
-            if count >= char_offset:
-                line_index = i
-                break
-        return line_index // body_h
 
     def set_bookmark(self):
         self.store.set_bookmark(self.book.path, self.chapter_index, self.page_index)

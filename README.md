@@ -2,7 +2,7 @@
 
 A terminal-based (NCurses) ePUB reader with a clean, keyboard-driven interface. Built for offline reading in terminal environments.
 
-**Version:** 0.5.2 (2026-07-12)
+**Version:** 0.5.3 (2026-07-20)
 
 ## Features
 
@@ -21,6 +21,7 @@ A terminal-based (NCurses) ePUB reader with a clean, keyboard-driven interface. 
 - **Direct Dictionary Prompt:** Type any word to lookup (? key) - *v0.4.15*
 - **Help Dialog:** Press h to see all key bindings - *v0.5.1*
 - **Clean Status Bar:** Simplified footer with just position info - *v0.5.1*
+- **Colored Headings:** Chapter headings in yellow+bold, toggle with g key - *v0.5.3*
 
 ## Controls
 
@@ -112,6 +113,24 @@ Pair programmed with my OpenClaw Agent Sparky ⚡. Using local Qwen 27B running 
 ---
 
 ## Recent Changes
+
+### v0.5.3 (2026-07-20) - Headings, Colors & Bug Fixes
+
+**New Features:**
+- **Colored chapter headings:** h1-h6 headings render in yellow+bold for easy scanning
+- **Heading style toggle (`g` key):** Switch between yellow+bold and reverse video
+
+**Bug Fixes:**
+- **Duplicate chapter headings:** `<head>` content (including `<title>`) is now skipped during parsing, eliminating duplicate plain-text headings that appeared alongside styled `<h1>` headings
+- **All text colors broken after initial popup:** `setup_colors()` now guards against re-initialization, preventing `curses.start_color()` from failing on second call and disabling all color rendering
+- **Search jumps to wrong page:** `search()` now operates against styled pages (same data used for rendering) instead of raw chapter text, ensuring search results land on the correct page
+- **Fuzzy dictionary suggestions freeze UI:** Length-filtered word matching is now capped at 5000 candidates to prevent freezing on misspelled lookups
+
+**Performance:**
+- **Color lookup tables moved to module level:** `_NAMED_COLORS` and `_ANSI_COLORS` are now module-level constants, eliminating per-character dict/list allocation during rendering
+
+**Cleanup:**
+- Removed dead code: `_guess_title`, `_get_page_text`, `ensure_dictionary`
 
 ### v0.5.2 (2026-07-12) - Bug Fixes & Performance
 
