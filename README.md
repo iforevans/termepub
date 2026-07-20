@@ -2,7 +2,7 @@
 
 A terminal-based (NCurses) ePUB reader with a clean, keyboard-driven interface. Built for offline reading in terminal environments.
 
-**Version:** 0.5.3 (2026-07-20)
+**Version:** 0.5.4 (2026-07-20)
 
 ## Features
 
@@ -22,6 +22,7 @@ A terminal-based (NCurses) ePUB reader with a clean, keyboard-driven interface. 
 - **Help Dialog:** Press h to see all key bindings - *v0.5.1*
 - **Clean Status Bar:** Simplified footer with just position info - *v0.5.1*
 - **Colored Headings:** Chapter headings in yellow+bold, toggle with g key - *v0.5.3*
+- **Debug Mode:** Set TERM_EPUB_DEBUG=1 for curses error logging - *v0.5.4*
 
 ## Controls
 
@@ -113,6 +114,15 @@ Pair programmed with my OpenClaw Agent Sparky ⚡. Using local Qwen 27B running 
 ---
 
 ## Recent Changes
+
+### v0.5.4 (2026-07-20) - Performance & Code Quality
+
+**Performance:**
+- **ascii_sanitize: 3x faster:** Uses `str.translate` table for 23 single-character replacements instead of 34 sequential `str.replace()` calls. Remaining 9 multi-char replacements (em dash, ellipsis, arrows) still use replace.
+
+**Code Quality:**
+- **Named constants:** All magic numbers replaced with named constants (`KEY_ESCAPE`, `KEY_ENTER`, `COLOR_PAIR_TITLE`, etc.) for readability and maintainability.
+- **Debug mode:** Set `TERM_EPUB_DEBUG=1` to log curses rendering errors to stderr with coordinates.
 
 ### v0.5.3 (2026-07-20) - Headings, Colors & Bug Fixes
 

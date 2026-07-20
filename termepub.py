@@ -11,7 +11,7 @@ Features:
 - Justified text mode toggle (j key)
 - Word selection mode for dictionary lookup (d key + arrow keys)
 
-Version: 0.5.3
+Version: 0.5.4
 """
 import curses
 import hashlib
@@ -29,7 +29,7 @@ from html.parser import HTMLParser
 from typing import Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 
-__version__ = "0.5.3"
+__version__ = "0.5.4"
 
 _DEBUG = os.environ.get("TERMEPUB_DEBUG", "").lower() in ("1", "true", "yes")
 
