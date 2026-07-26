@@ -2,7 +2,7 @@
 
 A terminal-based (NCurses) ePUB reader with a clean, keyboard-driven interface. Built for offline reading in terminal environments.
 
-**Version:** 0.5.4 (2026-07-20)
+**Version:** 0.5.5 (2026-07-26)
 
 ## Features
 
@@ -23,6 +23,7 @@ A terminal-based (NCurses) ePUB reader with a clean, keyboard-driven interface. 
 - **Clean Status Bar:** Simplified footer with just position info - *v0.5.1*
 - **Colored Headings:** Chapter headings in yellow+bold, toggle with g key - *v0.5.3*
 - **Debug Mode:** Set TERM_EPUB_DEBUG=1 for curses error logging - *v0.5.4*
+- **Responsive Layout:** Terminal resize support — adapts to any window size, no wrap-around overflow - *v0.5.5*
 
 ## Controls
 
@@ -326,6 +327,20 @@ Ifor Evans - [@iforevans](https://github.com/iforevans)
 - Added cache invalidation for theme/heading style toggles
 - Added `--version` flag
 - Added Sparky co-author credit
+
+### v0.5.5 (2026-07-26) - Responsive Terminal Layout
+
+**Features:**
+- Full terminal resize support — app adapts to any window size
+- Real-time resize detection via ioctl polling (avoids SIGWINCH signal handler curses corruption)
+- Proper cache invalidation on resize (both pages and styled pages caches)
+- Total pages recomputed on resize for accurate pagination
+- Dictionary prompt input survives terminal resize (bounds-safe addnstr with try/except)
+- Info popup with terminal-too-small guard and clamped dimensions
+
+**Tests:**
+- MockStdscr sweep: 1,269 render configurations (widths 20-160, multiple heights)
+- Real PTY + pyte: 9 static sizes + 5 live SIGWINCH resizes
 
 ### v0.4.3 (2026-03-27) - CSS Rendering
 

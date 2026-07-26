@@ -11,16 +11,19 @@ Features:
 - Justified text mode toggle (j key)
 - Word selection mode for dictionary lookup (d key + arrow keys)
 
-Version: 0.5.4
+Version: 0.5.5
 """
 import curses
+import fcntl
 import hashlib
 import html
 import json
 import os
 import re
+import struct
 import sys
 import textwrap
+import termios
 import unicodedata
 import urllib.request
 import zipfile
@@ -29,7 +32,7 @@ from html.parser import HTMLParser
 from typing import Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 
-__version__ = "0.5.4"
+__version__ = "0.5.5"
 
 _DEBUG = os.environ.get("TERMEPUB_DEBUG", "").lower() in ("1", "true", "yes")
 
@@ -1163,6 +1166,7 @@ class ReaderUI:
         self.pages_cache: Dict[Tuple[int, int, int, str], List[List[str]]] = {}
         self.pages_attrs_cache: Dict[Tuple, List[List[List[Tuple[str, int]]]]] = {}  # Cache pages with attrs by chapter
         self.running = True
+        self._last_terminal_size = None
         self.theme = self.store.get_theme()
         self.show_header = self.store.get_show_header()
         self.justify_text = self.store.get_justify_text()
@@ -1181,6 +1185,38 @@ class ReaderUI:
         self.selected_word_end = 0        # Character end position within line
         self.all_word_positions: List[Tuple[int, int, int]] = []  # List of (line, start, end) for all words
         self.load_book(book, use_saved_position=True)
+
+    @staticmethod
+    def _true_terminal_size():
+        """Real window size as (rows, cols) straight from the kernel."""
+        for stream in (sys.stdout, sys.stdin, sys.stderr):
+            try:
+                packed = fcntl.ioctl(stream.fileno(), termios.TIOCGWINSZ, b'\0' * 8)
+                rows, cols = struct.unpack('HHHH', packed)[:2]
+                if rows > 0 and cols > 0:
+                    return rows, cols
+            except (OSError, ValueError, AttributeError, io.UnsupportedOperation):
+                continue
+        try:
+            size = os.get_terminal_size()
+            return size.lines, size.columns
+        except OSError:
+            return None
+
+    def _handle_resize(self, new_size):
+        """Update curses geometry for new terminal size, clear caches."""
+        try:
+            curses.resizeterm(new_size[0], new_size[1])
+        except (curses.error, AttributeError):
+            pass
+        try:
+            curses.doupdate()
+        except (curses.error, AttributeError):
+            pass
+        self.pages_cache.clear()
+        self.pages_attrs_cache.clear()
+        self.total_pages = self._compute_total_pages()
+        self._ensure_page_in_range()
 
     def load_book(self, book: EpubBook, use_saved_position: bool = True):
         self.book = book
@@ -1428,15 +1464,18 @@ class ReaderUI:
         self.stdscr.keypad(False)
         curses.echo()
         curses.curs_set(1)
-        
+
         try:
             # Show prompt
             h, w = self.stdscr.getmaxyx()
             prompt = "Word to lookup: "
-            self.stdscr.addstr(h - 2, 0, " " * (w - 1))
-            self.stdscr.addstr(h - 2, 0, prompt)
+            try:
+                self.stdscr.addnstr(h - 2, 0, " " * (w - 1), w - 1)
+                self.stdscr.addnstr(h - 2, 0, prompt, w - 1)
+            except curses.error:
+                pass
             self.stdscr.refresh()
-            
+
             # Read input
             word = ""
             while True:
@@ -1449,13 +1488,21 @@ class ReaderUI:
                 elif ch in (KEY_BACKSPACE_ALT, KEY_BACKSPACE_CTRL):  # Backspace
                     if word:
                         word = word[:-1]
-                        self.stdscr.addstr(h - 2, 0, " " * (w - 1))
-                        self.stdscr.addstr(h - 2, 0, prompt + word)
+                        h, w = self.stdscr.getmaxyx()
+                        try:
+                            self.stdscr.addnstr(h - 2, 0, " " * (w - 1), w - 1)
+                            self.stdscr.addnstr(h - 2, 0, prompt + word, w - 1)
+                        except curses.error:
+                            pass
                         self.stdscr.refresh()
                 elif 32 <= ch <= 126:  # Printable
                     word += chr(ch)
-                    self.stdscr.addstr(h - 2, 0, " " * (w - 1))
-                    self.stdscr.addstr(h - 2, 0, prompt + word)
+                    h, w = self.stdscr.getmaxyx()
+                    try:
+                        self.stdscr.addnstr(h - 2, 0, " " * (w - 1), w - 1)
+                        self.stdscr.addnstr(h - 2, 0, prompt + word, w - 1)
+                    except curses.error:
+                        pass
                     self.stdscr.refresh()
         finally:
             curses.noecho()
@@ -1612,9 +1659,19 @@ class ReaderUI:
         self.stdscr.erase()
         h, w = self.stdscr.getmaxyx()
         
+        # Minimum popup size: need at least 6x4 for a visible box with content
+        if w < 6 or h < 4:
+            try:
+                self.stdscr.addnstr(h // 2, max(0, w // 2 - 5), "Too small", min(w, 9))
+            except curses.error:
+                pass
+            self.stdscr.refresh()
+            _ = self.stdscr.getch()
+            return
+
         # Calculate message dimensions (wrap to fit screen width minus padding)
-        max_msg_width = min(w - 8, 80)  # Wider popup
-        
+        max_msg_width = max(3, min(w - 8, 80))
+
         # Wrap message, handling long words by breaking them
         # First split on newlines to preserve paragraph breaks
         paragraphs = message.split('\n')
@@ -1641,32 +1698,32 @@ class ReaderUI:
             if para and para_idx < len(paragraphs) - 1 and any(p.strip() for p in paragraphs[para_idx+1:]):
                 if not lines or lines[-1]:  # Don't add if last line is already empty
                     lines.append("")
-        
+
          # Make popup larger - use 80% of screen if content is big
         content_height = len(lines) + 4  # title + message + borders
-        
+
         # Calculate optimal popup size - fit to content with reasonable limits
         longest_line = max(len(line) for line in lines) if lines else 0
         min_required_width = max(longest_line, len(title)) + 6  # +6 for padding and borders
-        
-        # Popup width: fit the content, but within reasonable bounds
+
+        # Popup width: fit the content, but within terminal bounds
         # Minimum: fit content or 50% of screen, whichever is larger
-        # Maximum: 90% of screen
+        # Maximum: terminal width (never exceeds screen)
         min_width = max(min_required_width, int(w * 0.5))
-        popup_width = min(min_width, int(w * 0.9))
-        
+        popup_width = min(max(6, min_width), w)
+
         # Height: show all content if it fits, otherwise max 85% of screen
-        max_popup_height = int(h * 0.85)
-        popup_height = min(content_height, max_popup_height)
-        
+        max_popup_height = max(4, min(int(h * 0.85), h))
+        popup_height = min(max(4, content_height), max_popup_height)
+
         # If content is taller than popup, we need scrolling
         needs_scroll = len(lines) > (popup_height - 4)
         if needs_scroll:
             visible_lines = popup_height - 4
             lines = lines[:visible_lines]  # Just show first part for now
-        
-        start_y = (h - popup_height) // 2
-        start_x = (w - popup_width) // 2
+
+        start_y = max(0, (h - popup_height) // 2)
+        start_x = max(0, (w - popup_width) // 2)
         
         # Determine popup attribute based on type
         if is_error:
@@ -1785,6 +1842,12 @@ Press any key..."""
         self.show_info_popup("Loaded", f"Loaded: {self.book.title}")
         self.draw()
         while self.running:
+            # Poll for terminal resize each iteration — avoids signal handler
+            # which corrupts curses' input buffer.
+            ts = self._true_terminal_size()
+            if ts and ts != self._last_terminal_size:
+                self._last_terminal_size = ts
+                self._handle_resize(ts)
             self._ensure_page_in_range()
             self.draw()
             ch = self.stdscr.getch()
@@ -2265,9 +2328,7 @@ Press any key..."""
             self.dictionary_lookup()
         elif ch == ord("?"):
             self.dictionary_prompt()
-        elif ch == curses.KEY_RESIZE:
-            self.pages_cache.clear()
-            self._ensure_page_in_range()
+
 
     def next_page(self):
         pages = self._get_plain_pages(self.chapter_index)
