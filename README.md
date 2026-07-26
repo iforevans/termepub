@@ -2,7 +2,7 @@
 
 A terminal-based (NCurses) ePUB reader with a clean, keyboard-driven interface. Built for offline reading in terminal environments.
 
-**Version:** 0.5.5 (2026-07-26)
+**Version:** 0.5.6 (2026-07-26)
 
 ## Features
 
@@ -24,6 +24,7 @@ A terminal-based (NCurses) ePUB reader with a clean, keyboard-driven interface. 
 - **Colored Headings:** Chapter headings in yellow+bold, toggle with g key - *v0.5.3*
 - **Debug Mode:** Set TERM_EPUB_DEBUG=1 for curses error logging - *v0.5.4*
 - **Responsive Layout:** Terminal resize support — adapts to any window size, no wrap-around overflow - *v0.5.5*
+- **Robust EPUB Handling:** Safe bounded archive reads, reliable pagination, and hardened malformed-book handling - *v0.5.6*
 
 ## Controls
 
@@ -111,6 +112,46 @@ Ifor Evans - [@iforevans](https://github.com/iforevans)
 ---
 
 ## Recent Changes
+
+### v0.5.6 (2026-07-26) - Reliability, Security & Test Coverage
+
+**Correctness:**
+- Fixed HTML style-stack corruption so nested and malformed tags no longer drop or leak styles
+- Preserved heading metadata when adjacent text segments are merged
+- Unified page counting, progress, navigation, and search around rendered styled pages
+- Search now finds phrases spanning rendered lines and page boundaries
+- File-picker filtering and letter jumping now use the visible result set safely
+- Switching books preserves `--no-css` and keeps the current book open if the replacement fails
+- Malformed state entries are discarded safely, and EPUBs with no readable spine chapters are rejected cleanly
+
+**Security & Resource Safety:**
+- Added limits for EPUB member count, individual decompressed text size, total decompressed text, and suspicious compression ratios
+- Added bounded ZIP-member reads to prevent malformed or hostile books from consuming unbounded memory
+
+**Terminal UX & Performance:**
+- Stopped idle redraws; the main loop now sleeps without repainting when no key is pressed
+- Prevented resize-event feedback loops and kept curses calls out of the SIGWINCH handler
+- TOC input blocks while idle and handles terminal resize events
+- Long information and dictionary popups are now scrollable
+
+**Tests:**
+- Added 22 focused pytest regressions covering parsing, pagination, search, state, EPUB limits, picker behavior, popup scrolling, and idle-loop behavior
+- Strengthened the real-PTY suite to require post-resize output with the title and footer at the new geometry
+- Responsive suite covers 705 reader layouts and 564 file-picker layouts; PTY suite covers 9 static sizes and 5 live resizes
+
+### v0.5.5 (2026-07-26) - Responsive Terminal Layout
+
+**Features:**
+- Full terminal resize support — app adapts to any window size
+- Real-time resize detection via a flag-only SIGWINCH handler with main-loop ioctl reconciliation
+- Proper styled-page cache invalidation on resize, with height and width in cache keys
+- Total pages recomputed on resize for accurate pagination
+- Dictionary prompt input survives terminal resize (bounds-safe addnstr with try/except)
+- Info popup with terminal-too-small guard and clamped dimensions
+
+**Tests:**
+- MockStdscr sweep: 1,269 render configurations (widths 20-160, multiple heights)
+- Real PTY + pyte: 9 static sizes + 5 live SIGWINCH resizes
 
 ### v0.5.4 (2026-07-20) - Performance & Code Quality
 
@@ -327,20 +368,6 @@ Ifor Evans - [@iforevans](https://github.com/iforevans)
 - Added cache invalidation for theme/heading style toggles
 - Added `--version` flag
 - Added Sparky co-author credit
-
-### v0.5.5 (2026-07-26) - Responsive Terminal Layout
-
-**Features:**
-- Full terminal resize support — app adapts to any window size
-- Real-time resize detection via ioctl polling (avoids SIGWINCH signal handler curses corruption)
-- Proper cache invalidation on resize (both pages and styled pages caches)
-- Total pages recomputed on resize for accurate pagination
-- Dictionary prompt input survives terminal resize (bounds-safe addnstr with try/except)
-- Info popup with terminal-too-small guard and clamped dimensions
-
-**Tests:**
-- MockStdscr sweep: 1,269 render configurations (widths 20-160, multiple heights)
-- Real PTY + pyte: 9 static sizes + 5 live SIGWINCH resizes
 
 ### v0.4.3 (2026-03-27) - CSS Rendering
 

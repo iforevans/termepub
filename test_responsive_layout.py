@@ -339,7 +339,10 @@ def main():
             picker = mod.FilePicker(mock, "/tmp")
             try:
                 picker.draw()
-            except Exception:
+            except Exception as exc:
+                fp_failures += 1
+                if width <= 50:
+                    print(f"\nEXCEPT Picker [{width}x{height}]: {type(exc).__name__}: {exc}")
                 continue
             fp_checks += 1
             if mock.has_overflow():

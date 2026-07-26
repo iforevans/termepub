@@ -28,14 +28,13 @@ import textwrap
 import termios
 import time
 import unicodedata
-import urllib.request
 import zipfile
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 
-__version__ = "0.5.5"
+__version__ = "0.5.6"
 
 _DEBUG = os.environ.get("TERMEPUB_DEBUG", "").lower() in ("1", "true", "yes")
 
@@ -72,6 +71,13 @@ COLOR_PAIR_TITLE = 3         # Yellow on default (headings)
 COLOR_PAIR_INFO_POPUP = 6    # White on blue
 COLOR_PAIR_ERROR_POPUP = 7   # White on red
 FIRST_DYNAMIC_COLOR_PAIR = 8 # Starting pair for dynamic text colors
+
+# Defensive limits for untrusted EPUB archives. EPUB text documents should
+# normally be small; these bounds prevent compressed members exhausting RAM.
+MAX_EPUB_MEMBERS = 10_000
+MAX_EPUB_TEXT_MEMBER_SIZE = 25 * 1024 * 1024
+MAX_EPUB_TOTAL_TEXT_SIZE = 100 * 1024 * 1024
+MAX_EPUB_COMPRESSION_RATIO = 1_000
 
 # CSS named colors mapping (common ones) - module-level to avoid per-call allocation
 _NAMED_COLORS: dict = {
@@ -306,6 +312,10 @@ class EpubTextExtractor(HTMLParser):
         "ul", "ol", "li", "dl", "dt", "dd", "table", "tr", "td", "th",
         "h1", "h2", "h3", "h4", "h5", "h6", "br", "hr"
     }
+    VOID_TAGS = {
+        "area", "base", "br", "col", "embed", "hr", "img", "input",
+        "link", "meta", "param", "source", "track", "wbr",
+    }
 
     def __init__(self, use_css: bool = True):
         super().__init__(convert_charrefs=True)
@@ -315,11 +325,9 @@ class EpubTextExtractor(HTMLParser):
         self.list_depth = 0
         self.skip_depth = 0
         self.heading_depth = 0  # Track nesting inside h1-h6 tags
-        # Style stack for CSS inheritance: each entry is a dict of styles
-        # added by a particular tag. The current style is the merge of all
-        # styles in the stack. Stack discipline: push on starttag with styles,
-        # pop on corresponding endtag.
-        self.style_stack: List[dict] = [{}]
+        # Every non-void tag gets a frame, including tags with no styles. This
+        # prevents an unstyled child from accidentally popping a styled parent.
+        self.style_stack: List[Tuple[Optional[str], dict]] = [(None, {})]
 
     def _get_current_styles(self) -> dict:
         """Get current inherited styles by merging the style stack.
@@ -333,7 +341,7 @@ class EpubTextExtractor(HTMLParser):
                 "This indicates a bug in tag handling (e.g., extra endtag without starttag)."
             )
         merged = {}
-        for style_dict in self.style_stack:
+        for _tag, style_dict in self.style_stack:
             merged.update(style_dict)
         return merged
 
@@ -361,9 +369,8 @@ class EpubTextExtractor(HTMLParser):
             elif tag in {"s", "strike", "del"}:
                 tag_styles['text_decoration'] = 'line-through'
 
-        # Push styles onto stack if there are any
-        if tag_styles:
-            self.style_stack.append(tag_styles)
+        if tag not in self.VOID_TAGS:
+            self.style_stack.append((tag, tag_styles))
 
         if tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
             self.heading_depth += 1
@@ -397,20 +404,38 @@ class EpubTextExtractor(HTMLParser):
         if self.skip_depth:
             return
 
-        # Pop styles from stack if this tag could have added styles
-        if (tag in {"b", "strong", "i", "em", "u", "s", "strike", "del", "span",
-                    "p", "div", "h1", "h2", "h3", "h4", "h5", "h6"} and
-            len(self.style_stack) > 1):
-            self.style_stack.pop()
+        # Pop this tag's frame. For malformed nesting, discard unmatched child
+        # frames until the requested tag is reached, preserving the root frame.
+        matching_index = None
+        for index in range(len(self.style_stack) - 1, 0, -1):
+            if self.style_stack[index][0] == tag:
+                matching_index = index
+                break
+        removed_tags = []
+        if matching_index is not None:
+            removed_tags = [frame_tag for frame_tag, _styles in self.style_stack[matching_index:]]
+            del self.style_stack[matching_index:]
 
-        if tag == "pre" and self.pre_depth > 0:
-            self.pre_depth -= 1
+        # Keep structural depth counters aligned with every frame discarded,
+        # including malformed HTML such as an outer tag closing first.
+        self.pre_depth = max(0, self.pre_depth - removed_tags.count("pre"))
+        self.list_depth = max(
+            0,
+            self.list_depth - sum(name in {"ul", "ol"} for name in removed_tags),
+        )
+        self.heading_depth = max(
+            0,
+            self.heading_depth - sum(
+                name in {"h1", "h2", "h3", "h4", "h5", "h6"}
+                for name in removed_tags
+            ),
+        )
+
+        if tag == "pre":
             self.segments.append(StyledSegment("\n\n", self._get_current_styles().copy()))
-        elif tag in {"ul", "ol"} and self.list_depth > 0:
-            self.list_depth -= 1
+        elif tag in {"ul", "ol"}:
             self.segments.append(StyledSegment("\n", self._get_current_styles().copy()))
-        elif tag in {"h1", "h2", "h3", "h4", "h5", "h6"} and self.heading_depth > 0:
-            self.heading_depth -= 1
+        elif tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
             self.segments.append(StyledSegment("\n\n", self._get_current_styles().copy()))
         elif tag == "blockquote":
             self.segments.append(StyledSegment("\n\n", self._get_current_styles().copy()))
@@ -459,9 +484,13 @@ class EpubTextExtractor(HTMLParser):
             # Don't merge across paragraph breaks (whitespace-only segments)
             if last.text.strip() == '' or seg.text.strip() == '':
                 merged.append(seg)
-            elif last.styles == seg.styles:
+            elif last.styles == seg.styles and last.is_heading == seg.is_heading:
                 # Merge: concatenate text, keep same styles
-                merged[-1] = StyledSegment(last.text + seg.text, last.styles)
+                merged[-1] = StyledSegment(
+                    last.text + seg.text,
+                    last.styles,
+                    is_heading=last.is_heading,
+                )
             else:
                 merged.append(seg)
         return merged
@@ -487,6 +516,10 @@ class EpubBook:
         self.path = os.path.abspath(path)
         self.use_css = use_css
         self.zf = zipfile.ZipFile(path)
+        if len(self.zf.infolist()) > MAX_EPUB_MEMBERS:
+            raise ValueError(f"EPUB contains too many files (limit {MAX_EPUB_MEMBERS})")
+        self._text_bytes_read = 0
+        self._counted_members = set()
         self.title = os.path.basename(path)
         self.author = "Unknown"
         self.rootfile = self._find_rootfile()
@@ -501,6 +534,8 @@ class EpubBook:
         self._load_toc()       # Load TOC FIRST
         self._load_chapters()  # Then load chapters (can use TOC titles)
         self._fill_missing_toc_entries()
+        if not self.chapters:
+            raise ValueError("EPUB contains no readable spine chapters")
 
     def close(self):
         """Close the underlying ZipFile to release the file handle."""
@@ -516,12 +551,42 @@ class EpubBook:
         """Ensure ZipFile is closed when the book is garbage collected."""
         self.close()
 
+    def _read_member(self, member: str) -> bytes:
+        """Read a bounded text member, rejecting suspicious archive entries."""
+        try:
+            info = self.zf.getinfo(member)
+        except KeyError:
+            raise
+        if info.is_dir():
+            raise ValueError(f"EPUB member is a directory: {member}")
+        if info.file_size > MAX_EPUB_TEXT_MEMBER_SIZE:
+            raise ValueError(f"EPUB text member is too large: {member}")
+        if info.compress_size == 0:
+            ratio = float("inf") if info.file_size else 1
+        else:
+            ratio = info.file_size / info.compress_size
+        if info.file_size > 1024 * 1024 and ratio > MAX_EPUB_COMPRESSION_RATIO:
+            raise ValueError(f"Suspicious EPUB compression ratio: {member}")
+
+        with self.zf.open(info) as source:
+            data = source.read(MAX_EPUB_TEXT_MEMBER_SIZE + 1)
+        if len(data) > MAX_EPUB_TEXT_MEMBER_SIZE:
+            raise ValueError(f"EPUB text member is too large: {member}")
+
+        if member not in self._counted_members:
+            projected_total = self._text_bytes_read + len(data)
+            if projected_total > MAX_EPUB_TOTAL_TEXT_SIZE:
+                raise ValueError("EPUB contains too much decompressed text")
+            self._text_bytes_read = projected_total
+            self._counted_members.add(member)
+        return data
+
     def _read_xml(self, member: str) -> ET.Element:
-        data = self.zf.read(member)
+        data = self._read_member(member)
         return ET.fromstring(data)
 
     def _find_rootfile(self) -> str:
-        root = ET.fromstring(self.zf.read("META-INF/container.xml"))
+        root = ET.fromstring(self._read_member("META-INF/container.xml"))
         for elem in root.iter():
             if strip_ns(elem.tag) == "rootfile":
                 full_path = elem.attrib.get("full-path")
@@ -576,7 +641,7 @@ class EpubBook:
         for idx, idref in enumerate(self.spine):
             href = self.manifest[idref]["href"]
             try:
-                raw = self.zf.read(href).decode("utf-8", errors="replace")
+                raw = self._read_member(href).decode("utf-8", errors="replace")
             except KeyError:
                 self.chapters.append("[Missing chapter content]\n")
                 self.chapter_segments.append([])
@@ -653,7 +718,7 @@ class EpubBook:
 
     def _parse_nav_toc(self, href: str) -> List[TocEntry]:
         try:
-            raw = self.zf.read(href).decode("utf-8", errors="replace")
+            raw = self._read_member(href).decode("utf-8", errors="replace")
         except KeyError:
             return []
         links = re.findall(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', raw, flags=re.I | re.S)
@@ -732,7 +797,17 @@ class StateStore:
             return {}
         try:
             with open(STATE_FILE, "r", encoding="utf-8") as fh:
-                return json.load(fh)
+                data = json.load(fh)
+            if not isinstance(data, dict):
+                return {}
+            # Every persisted entry, including _global, has an object schema.
+            # Drop only malformed entries so one corrupt book does not erase
+            # otherwise valid state.
+            return {
+                key: entry
+                for key, entry in data.items()
+                if isinstance(key, str) and isinstance(entry, dict)
+            }
         except Exception:
             return {}
 
@@ -742,75 +817,112 @@ class StateStore:
             json.dump(self.data, fh, indent=2, sort_keys=True)
         os.replace(tmp, STATE_FILE)
 
+    def _root(self) -> dict:
+        if not isinstance(self.data, dict):
+            self.data = {}
+        return self.data
+
+    def _dict_entry(self, key: str) -> dict:
+        root = self._root()
+        entry = root.get(key)
+        if not isinstance(entry, dict):
+            entry = {}
+            root[key] = entry
+        return entry
+
     @staticmethod
     def book_key(path: str) -> str:
         return hashlib.sha1(os.path.abspath(path).encode("utf-8")).hexdigest()
 
     def get_state(self, path: str) -> BookState:
-        entry = self.data.get(self.book_key(path), {})
+        data = self.data if isinstance(self.data, dict) else {}
+        entry = data.get(self.book_key(path), {})
+        if not isinstance(entry, dict):
+            entry = {}
+        try:
+            chapter_index = max(0, int(entry.get("chapter_index", 0)))
+            page_index = max(0, int(entry.get("page_index", 0)))
+        except (TypeError, ValueError):
+            chapter_index = page_index = 0
         return BookState(
-            chapter_index=int(entry.get("chapter_index", 0)),
-            page_index=int(entry.get("page_index", 0)),
+            chapter_index=chapter_index,
+            page_index=page_index,
         )
 
     def set_state(self, path: str, state: BookState):
         abs_path = os.path.abspath(path)
         key = self.book_key(abs_path)
-        entry = self.data.setdefault(key, {})
+        entry = self._dict_entry(key)
         entry["path"] = abs_path
         entry["chapter_index"] = int(state.chapter_index)
         entry["page_index"] = int(state.page_index)
-        global_entry = self.data.setdefault("_global", {})
+        global_entry = self._dict_entry("_global")
         global_entry["last_book_path"] = abs_path
 
     def set_bookmark(self, path: str, chapter_index: int, page_index: int):
         abs_path = os.path.abspath(path)
         key = self.book_key(abs_path)
-        entry = self.data.setdefault(key, {})
+        entry = self._dict_entry(key)
         entry["path"] = abs_path
         entry["bookmark"] = {
             "chapter_index": int(chapter_index),
             "page_index": int(page_index),
         }
-        global_entry = self.data.setdefault("_global", {})
+        global_entry = self._dict_entry("_global")
         global_entry["last_book_path"] = abs_path
 
     def get_bookmark(self, path: str) -> Optional[BookState]:
-        entry = self.data.get(self.book_key(path), {})
-        bm = entry.get("bookmark")
-        if not bm:
+        data = self.data if isinstance(self.data, dict) else {}
+        entry = data.get(self.book_key(path), {})
+        if not isinstance(entry, dict):
             return None
-        return BookState(
-            chapter_index=int(bm.get("chapter_index", 0)),
-            page_index=int(bm.get("page_index", 0)),
-        )
+        bm = entry.get("bookmark")
+        if not isinstance(bm, dict):
+            return None
+        try:
+            return BookState(
+                chapter_index=max(0, int(bm.get("chapter_index", 0))),
+                page_index=max(0, int(bm.get("page_index", 0))),
+            )
+        except (TypeError, ValueError):
+            return None
 
     def get_theme(self) -> str:
-        theme = self.data.get("_global", {}).get("theme", "dark")
+        data = self.data if isinstance(self.data, dict) else {}
+        global_entry = data.get("_global", {})
+        if not isinstance(global_entry, dict):
+            global_entry = {}
+        theme = global_entry.get("theme", "dark")
         return theme if theme in {"dark", "light"} else "dark"
 
     def set_theme(self, theme: str):
         if theme not in {"dark", "light"}:
             return
-        global_entry = self.data.setdefault("_global", {})
+        global_entry = self._dict_entry("_global")
         global_entry["theme"] = theme
 
     def get_show_header(self) -> bool:
-        return bool(self.data.get("_global", {}).get("show_header", True))
+        data = self.data if isinstance(self.data, dict) else {}
+        global_entry = data.get("_global", {})
+        return bool(global_entry.get("show_header", True)) if isinstance(global_entry, dict) else True
 
     def set_show_header(self, show_header: bool):
-        global_entry = self.data.setdefault("_global", {})
+        global_entry = self._dict_entry("_global")
         global_entry["show_header"] = bool(show_header)
 
     def get_justify_text(self) -> bool:
-        return bool(self.data.get("_global", {}).get("justify_text", False))
+        data = self.data if isinstance(self.data, dict) else {}
+        global_entry = data.get("_global", {})
+        return bool(global_entry.get("justify_text", False)) if isinstance(global_entry, dict) else False
 
     def set_justify_text(self, justify_text: bool):
-        global_entry = self.data.setdefault("_global", {})
+        global_entry = self._dict_entry("_global")
         global_entry["justify_text"] = bool(justify_text)
 
     def get_last_book_path(self) -> Optional[str]:
-        path = self.data.get("_global", {}).get("last_book_path")
+        data = self.data if isinstance(self.data, dict) else {}
+        global_entry = data.get("_global", {})
+        path = global_entry.get("last_book_path") if isinstance(global_entry, dict) else None
         if isinstance(path, str) and path:
             return path
         return None
@@ -887,15 +999,16 @@ def lookup_word(word: str) -> str:
     # Find similar words using length-filtered subset, capped to avoid UI freeze
     target_len = len(word_lower)
     similar = []
-    max_candidates = 5000  # Cap iterations to prevent freezing on large word sets
+    max_candidates = 5000  # Cap examined length-compatible words
+    examined_candidates = 0
 
     for line_word in word_set:
-        if len(similar) >= max_candidates:
-            break
-
         len_diff = abs(len(line_word) - target_len)
         if len_diff > 1:
             continue
+        examined_candidates += 1
+        if examined_candidates > max_candidates:
+            break
 
         if len_diff == 0:
             diffs = sum(c1 != c2 for c1, c2 in zip(word_lower, line_word))
@@ -947,7 +1060,7 @@ class FilePicker:
         """Jump to the first entry starting with the given letter (case-insensitive)."""
         letter = letter.lower()
         normalized_entries = [(self._normalize_title(label), label, full, is_dir)
-                              for label, full, is_dir in self.entries]
+                              for label, full, is_dir in self.filtered_entries]
         
         # Find first entry starting with the letter
         for idx, (normalized, label, full, is_dir) in enumerate(normalized_entries):
@@ -989,6 +1102,7 @@ class FilePicker:
         """Apply the current filter text to the entries list."""
         if not self.filter_text:
             self.filtered_entries = self.entries
+            self.selected = max(0, min(self.selected, len(self.filtered_entries) - 1)) if self.filtered_entries else 0
             return
         
         filter_lower = self.filter_text.lower()
@@ -997,9 +1111,8 @@ class FilePicker:
             if filter_lower in entry[0].lower()
         ]
         
-        # Adjust selection if needed
-        if self.filtered_entries and self.selected >= len(self.filtered_entries):
-            self.selected = max(0, len(self.filtered_entries) - 1)
+        # Keep selection valid relative to the displayed list.
+        self.selected = max(0, min(self.selected, len(self.filtered_entries) - 1)) if self.filtered_entries else 0
 
     def run(self) -> Optional[str]:
         waiting_for_letter = False
@@ -1080,9 +1193,11 @@ class FilePicker:
                     if self.selected + 1 < len(self.filtered_entries):
                         self.selected += 1
                 elif ch in (curses.KEY_NPAGE, KEY_PAGE_DOWN_TERMINFO):
-                    self.selected = min(len(self.filtered_entries) - 1, self.selected + max(1, self.body_height()))
+                    if self.filtered_entries:
+                        self.selected = min(len(self.filtered_entries) - 1, self.selected + max(1, self.body_height()))
                 elif ch in (curses.KEY_PPAGE, KEY_PAGE_UP_TERMINFO):
-                    self.selected = max(0, self.selected - max(1, self.body_height()))
+                    if self.filtered_entries:
+                        self.selected = max(0, self.selected - max(1, self.body_height()))
                 elif ch == curses.KEY_LEFT:
                     parent = os.path.dirname(self.current_dir)
                     if parent and parent != self.current_dir:
@@ -1169,7 +1284,6 @@ class ReaderUI:
         self.page_index = 0
         self.status_message = ""
         self.total_pages: int = 0
-        self.pages_cache: Dict[Tuple[int, int, int, str], List[List[str]]] = {}
         self.pages_attrs_cache: Dict[Tuple, List[List[List[Tuple[str, int]]]]] = {}  # Cache pages with attrs by chapter
         self.running = True
         self._pending_resize = False
@@ -1211,11 +1325,16 @@ class ReaderUI:
 
     def _handle_resize(self):
         """Update curses geometry for new terminal size, clear caches."""
+        size = self._true_terminal_size()
+        if size and self.stdscr.getmaxyx() != size:
+            try:
+                curses.resizeterm(size[0], size[1])
+            except (curses.error, AttributeError):
+                pass
         try:
             self.stdscr.clear()
         except curses.error:
             pass
-        self.pages_cache.clear()
         self.pages_attrs_cache.clear()
         self.total_pages = self._compute_total_pages()
         self._ensure_page_in_range()
@@ -1230,35 +1349,18 @@ class ReaderUI:
         else:
             self.chapter_index = 0
             self.page_index = 0
-        self.pages_cache.clear()
         self.pages_attrs_cache.clear()
         self.total_pages = self._compute_total_pages()
         self.store.set_state(self.book.path, BookState(self.chapter_index, self.page_index))
         self.store.save()
 
     def _compute_total_pages(self) -> int:
-        """Compute total pages in the book (cached, doesn't change with screen resize)."""
-        h, w = self.stdscr.getmaxyx()
-        reserved = 2 if self.show_header else 1
-        body_h = max(3, h - reserved)
-        
-        total = 0
-        for chapter_text in self.book.chapters:
-            lines = self._wrap_text(chapter_text, max(20, w - 1))
-            chapter_pages = max(1, (len(lines) + body_h - 1) // body_h)
-            total += chapter_pages
-        
-        return total
+        """Compute total pages using the same styled pages used for rendering."""
+        return sum(self._get_pages_count(index) for index in range(len(self.book.chapters)))
 
     def _get_pages_count(self, chapter_index: int) -> int:
-        """Get number of pages in a chapter."""
-        h, w = self.stdscr.getmaxyx()
-        reserved = 2 if self.show_header else 1
-        body_h = max(3, h - reserved)
-        body_w = max(20, w - 1)
-        
-        lines = self._wrap_text(self.book.chapters[chapter_index], body_w)
-        return max(1, (len(lines) + body_h - 1) // body_h)
+        """Get rendered page count for a chapter from the styled-page cache."""
+        return max(1, len(self._get_styled_pages(chapter_index)))
 
     def setup_colors(self):
         if self.has_colors:
@@ -1364,7 +1466,6 @@ class ReaderUI:
         self.next_color_pair = FIRST_DYNAMIC_COLOR_PAIR
         self.store.set_theme(self.theme)
         self.store.save()
-        self.pages_cache.clear()
         self.pages_attrs_cache.clear()
         self.apply_theme()
         self.show_info_popup("Theme", f"Theme: {self.theme}")
@@ -1372,7 +1473,6 @@ class ReaderUI:
     def toggle_header(self):
         self.show_header = not self.show_header
         self.store.set_show_header(self.show_header)
-        self.pages_cache.clear()
         self.total_pages = self._compute_total_pages()  # Recompute when header changes
         self.store.save()
         self.show_info_popup("Header", f"Header: {'on' if self.show_header else 'off'}")
@@ -1387,7 +1487,6 @@ class ReaderUI:
         else:
             self.heading_attr = reverse
             style = "reverse"
-        self.pages_cache.clear()
         self.pages_attrs_cache.clear()
         self.show_info_popup("Heading", f"Heading style: {style}")
 
@@ -1396,7 +1495,6 @@ class ReaderUI:
         self.justify_text = not self.justify_text
         self.store.set_justify_text(self.justify_text)
         self.store.save()
-        self.pages_cache.clear()
         self.pages_attrs_cache.clear()
         mode = "justified" if self.justify_text else "left-aligned"
         self.show_info_popup("Text", f"Text alignment: {mode}")
@@ -1652,150 +1750,108 @@ class ReaderUI:
         return (current_page, self.total_pages)
 
     def show_info_popup(self, title: str, message: str, is_error: bool = False):
-        """Show an info/error popup with styled border (white on blue/red), blocking until key press."""
-        # Ensure colors are set up and screen is ready
+        """Show a blocking, scrollable information or error popup."""
         if not self.has_colors:
             self.setup_colors()
-        
-        # Set background color
         if self.has_colors:
-            self.stdscr.bkgd(" ", curses.color_pair(COLOR_PAIR_INVERSE) if self.theme == "light" else curses.color_pair(COLOR_PAIR_DEFAULT))
-        
-        self.stdscr.erase()
+            background = curses.color_pair(
+                COLOR_PAIR_INVERSE if self.theme == "light" else COLOR_PAIR_DEFAULT
+            )
+            self.stdscr.bkgd(" ", background)
+
         h, w = self.stdscr.getmaxyx()
-        
-        # Minimum popup size: need at least 6x4 for a visible box with content
-        if w < 6 or h < 4:
+        if w < 6 or h < 5:
             try:
-                self.stdscr.addnstr(h // 2, max(0, w // 2 - 5), "Too small", min(w, 9))
+                self.stdscr.erase()
+                self.stdscr.addnstr(h // 2, 0, "Too small", max(0, w - 1))
+                self.stdscr.refresh()
+                self.stdscr.nodelay(False)
+                self.stdscr.getch()
             except curses.error:
                 pass
-            self.stdscr.refresh()
-            _ = self.stdscr.getch()
+            finally:
+                self.stdscr.nodelay(True)
             return
 
-        # Calculate message dimensions (wrap to fit screen width minus padding)
-        max_msg_width = max(3, min(w - 8, 80))
-
-        # Wrap message, handling long words by breaking them
-        # First split on newlines to preserve paragraph breaks
-        paragraphs = message.split('\n')
+        max_msg_width = max(1, min(w - 6, 80))
         lines = []
+        for paragraph in message.split("\n"):
+            if not paragraph.strip():
+                lines.append("")
+                continue
+            lines.extend(textwrap.wrap(
+                paragraph, width=max_msg_width, replace_whitespace=True,
+                drop_whitespace=True, break_long_words=True,
+                break_on_hyphens=False,
+            ) or [""])
 
-        for para_idx, para in enumerate(paragraphs):
-            for word in para.split():
-                # Break up very long words (e.g., definitions with no spaces)
-                if len(word) > max_msg_width:
-                    # Split word into chunks
-                    chunks = [word[i:i+max_msg_width] for i in range(0, len(word), max_msg_width)]
-                    for i, chunk in enumerate(chunks):
-                        if i > 0 and lines and len(lines[-1]) < max_msg_width:
-                            lines[-1] += " " + chunk
-                        else:
-                            lines.append(chunk)
-                elif not lines or not para.strip():
-                    lines.append(word)
-                elif len(lines[-1]) + len(word) + 1 <= max_msg_width:
-                    lines[-1] += " " + word
-                else:
-                    lines.append(word)
-            # Add empty line between paragraphs (if there's more content)
-            if para and para_idx < len(paragraphs) - 1 and any(p.strip() for p in paragraphs[para_idx+1:]):
-                if not lines or lines[-1]:  # Don't add if last line is already empty
-                    lines.append("")
-
-         # Make popup larger - use 80% of screen if content is big
-        content_height = len(lines) + 4  # title + message + borders
-
-        # Calculate optimal popup size - fit to content with reasonable limits
-        longest_line = max(len(line) for line in lines) if lines else 0
-        min_required_width = max(longest_line, len(title)) + 6  # +6 for padding and borders
-
-        # Popup width: fit the content, but within terminal bounds
-        # Minimum: fit content or 50% of screen, whichever is larger
-        # Maximum: terminal width (never exceeds screen)
-        min_width = max(min_required_width, int(w * 0.5))
-        popup_width = min(max(6, min_width), w)
-
-        # Height: show all content if it fits, otherwise max 85% of screen
-        max_popup_height = max(4, min(int(h * 0.85), h))
-        popup_height = min(max(4, content_height), max_popup_height)
-
-        # If content is taller than popup, we need scrolling
-        needs_scroll = len(lines) > (popup_height - 4)
-        if needs_scroll:
-            visible_lines = popup_height - 4
-            lines = lines[:visible_lines]  # Just show first part for now
-
+        longest_line = max([len(title)] + [len(line) for line in lines])
+        popup_width = min(w, max(6, min(max_msg_width + 4, longest_line + 4)))
+        max_popup_height = max(5, min(h, int(h * 0.85)))
+        popup_height = min(max_popup_height, max(5, len(lines) + 4))
+        visible_count = max(1, popup_height - 4)
+        max_offset = max(0, len(lines) - visible_count)
+        offset = 0
         start_y = max(0, (h - popup_height) // 2)
         start_x = max(0, (w - popup_width) // 2)
-        
-        # Determine popup attribute based on type
-        if is_error:
-            popup_attr = curses.color_pair(COLOR_PAIR_ERROR_POPUP)
-        else:
-            popup_attr = curses.color_pair(COLOR_PAIR_INFO_POPUP)
-        
-        try:
-            # Draw popup border (top)
-            self.stdscr.attron(popup_attr)
-            self.stdscr.addnstr(start_y, start_x, "+" + "-" * (popup_width - 2) + "+", popup_width)
-            self.stdscr.attroff(popup_attr)
-            
-            # Draw sides (empty)
-            for y in range(1, popup_height - 1):
-                self.stdscr.attron(popup_attr)
-                self.stdscr.addnstr(start_y + y, start_x, "|" + " " * (popup_width - 2) + "|", popup_width)
-                self.stdscr.attroff(popup_attr)
-            
-            # Draw popup border (bottom)
-            self.stdscr.attron(popup_attr)
-            self.stdscr.addnstr(start_y + popup_height - 1, start_x, "+" + "-" * (popup_width - 2) + "+", popup_width)
-            self.stdscr.attroff(popup_attr)
-            
-            # Draw title (centered, yellow bold like termgpt)
-            title_line = " " + title + " "
-            title_x = start_x + (popup_width - len(title_line)) // 2
-            self.stdscr.attron(curses.color_pair(COLOR_PAIR_TITLE) | curses.A_BOLD)
-            self.stdscr.addnstr(start_y + 1, title_x, title_line[:popup_width - 2], popup_width - 2)
-            self.stdscr.attroff(curses.color_pair(COLOR_PAIR_TITLE) | curses.A_BOLD)
-            
-            # Draw message with popup background
-            msg_start_y = start_y + 2
-            for i, line in enumerate(lines):
-                msg_width = popup_width - 4
-                # Only truncate if line is actually longer than popup
-                display_line = line if len(line) <= msg_width else line[:msg_width]
-                # Fill the line with background color first
-                self.stdscr.attron(popup_attr)
-                self.stdscr.addnstr(msg_start_y + i, start_x + 2, " " * msg_width, msg_width)
-                # Then draw text on top
-                self.stdscr.addnstr(msg_start_y + i, start_x + 2, display_line, msg_width)
-                self.stdscr.attroff(popup_attr)
-            
-            # Draw scroll indicator if needed
-            if needs_scroll:
-                scroll_msg = "▼ more ▼"
-                self.stdscr.attron(popup_attr)
-                self.stdscr.addnstr(start_y + popup_height - 2, start_x + (popup_width - len(scroll_msg)) // 2, scroll_msg)
-                self.stdscr.attroff(popup_attr)
-            else:
-                # Draw "Press any key" at bottom
-                prompt = "Press any key...".center(popup_width - 2)
-                self.stdscr.attron(popup_attr)
-                self.stdscr.addnstr(start_y + popup_height - 2, start_x + 1, prompt, popup_width - 2)
-                self.stdscr.attroff(popup_attr)
-        except curses.error:
-            pass  # Terminal too small - skip prompt text
-        
-        self.stdscr.refresh()
-        # Wait for any key — switch to blocking mode for the getch
+        popup_attr = (
+            curses.color_pair(COLOR_PAIR_ERROR_POPUP if is_error else COLOR_PAIR_INFO_POPUP)
+            if self.has_colors else curses.A_REVERSE
+        )
+        title_attr = (
+            curses.color_pair(COLOR_PAIR_TITLE) | curses.A_BOLD
+            if self.has_colors else curses.A_BOLD
+        )
+
         self.stdscr.nodelay(False)
-        self.stdscr.getch()
-        self.stdscr.nodelay(True)
-        # Clear status message after popup is dismissed
-        self.status_message = ""
-    
+        try:
+            while True:
+                self.stdscr.erase()
+                visible_lines = lines[offset:offset + visible_count]
+                try:
+                    border = "+" + "-" * (popup_width - 2) + "+"
+                    self.stdscr.addnstr(start_y, start_x, border, popup_width, popup_attr)
+                    for row in range(1, popup_height - 1):
+                        blank = "|" + " " * (popup_width - 2) + "|"
+                        self.stdscr.addnstr(start_y + row, start_x, blank, popup_width, popup_attr)
+                    self.stdscr.addnstr(start_y + popup_height - 1, start_x, border, popup_width, popup_attr)
+
+                    title_line = f" {title} "[:popup_width - 2]
+                    title_x = start_x + max(1, (popup_width - len(title_line)) // 2)
+                    self.stdscr.addnstr(start_y + 1, title_x, title_line, popup_width - 2, title_attr)
+
+                    msg_width = popup_width - 4
+                    for row, line in enumerate(visible_lines):
+                        self.stdscr.addnstr(start_y + 2 + row, start_x + 2, line, msg_width, popup_attr)
+
+                    if max_offset:
+                        footer = f"Up/Down {offset + 1}-{min(len(lines), offset + visible_count)}/{len(lines)}"
+                    else:
+                        footer = "Press any key..."
+                    footer = footer[:popup_width - 2].center(popup_width - 2)
+                    self.stdscr.addnstr(
+                        start_y + popup_height - 2, start_x + 1,
+                        footer, popup_width - 2, popup_attr,
+                    )
+                except curses.error:
+                    pass
+                self.stdscr.refresh()
+
+                ch = self.stdscr.getch()
+                if max_offset and ch == curses.KEY_DOWN:
+                    offset = min(max_offset, offset + 1)
+                elif max_offset and ch == curses.KEY_UP:
+                    offset = max(0, offset - 1)
+                elif max_offset and ch in (curses.KEY_NPAGE, KEY_PAGE_DOWN_TERMINFO):
+                    offset = min(max_offset, offset + visible_count)
+                elif max_offset and ch in (curses.KEY_PPAGE, KEY_PAGE_UP_TERMINFO):
+                    offset = max(0, offset - visible_count)
+                else:
+                    break
+        finally:
+            self.stdscr.nodelay(True)
+            self.status_message = ""
+
     def show_help(self):
         """Display a help dialog - split into small pages that fit small screens."""
         help_page1 = """Page 1/3
@@ -1848,16 +1904,10 @@ Press any key..."""
         self.setup_colors()
         self._ensure_page_in_range()
 
-        # Install SIGWINCH handler — sets flag and calls resizeterm only.
-        # Heavy work (clear, cache invalidation) is deferred to main loop.
+        # Signal handlers only set flags; all curses calls happen in the main
+        # loop, avoiding re-entrant terminal operations.
         def _on_sigwinch(signum, frame, ui=self):
             ui._pending_resize = True
-            size = ui._true_terminal_size()
-            if size:
-                try:
-                    curses.resizeterm(size[0], size[1])
-                except (curses.error, AttributeError):
-                    pass
 
         try:
             signal.signal(signal.SIGWINCH, _on_sigwinch)
@@ -1865,12 +1915,15 @@ Press any key..."""
             pass
 
         self.show_info_popup("Loaded", f"Loaded: {self.book.title}")
-        self.draw()
+        needs_draw = True
         while self.running:
             if self._pending_resize:
                 self._handle_resize()
-            self._ensure_page_in_range()
-            self.draw()
+                needs_draw = True
+            if needs_draw:
+                self._ensure_page_in_range()
+                self.draw()
+                needs_draw = False
             try:
                 ch = self.stdscr.getch()
             except curses.error:
@@ -1882,6 +1935,7 @@ Press any key..."""
                 self._pending_resize = True
                 continue
             self.handle_key(ch)
+            needs_draw = True
         self._save_position()
 
     def _save_position(self):
@@ -2124,7 +2178,7 @@ Press any key..."""
             and each line is a list of (fragment_text, curses_attr) tuples.
         """
         h, w = self.stdscr.getmaxyx()
-        cache_key = (chapter_index, w, self.show_header, self.justify_text, self.theme, self.heading_attr)
+        cache_key = (chapter_index, h, w, self.show_header, self.justify_text, self.theme, self.heading_attr)
 
         if cache_key in self.pages_attrs_cache:
             return self.pages_attrs_cache[cache_key]
@@ -2398,28 +2452,39 @@ Press any key..."""
 
     def open_toc(self):
         entries = self.book.toc
+        if not entries:
+            self.show_info_popup("Table of Contents", "No table of contents available")
+            return
         idx = 0
         for i, entry in enumerate(entries):
             if entry.spine_index == self.chapter_index:
                 idx = i
                 break
-        while True:
-            self._draw_toc(entries, idx)
-            ch = self.stdscr.getch()
-            if ch in (ord("q"), KEY_ESCAPE):
-                return
-            if ch in (curses.KEY_DOWN, ord("j")):
-                idx = min(len(entries) - 1, idx + 1)
-            elif ch in (curses.KEY_UP, ord("k")):
-                idx = max(0, idx - 1)
-            elif ch in (KEY_ENTER, KEY_LF, curses.KEY_ENTER, curses.KEY_RIGHT):
-                self.chapter_index = entries[idx].spine_index
-                self.page_index = 0
-                return
-            elif ch in (curses.KEY_NPAGE, KEY_PAGE_DOWN_TERMINFO):
-                idx = min(len(entries) - 1, idx + 10)
-            elif ch in (curses.KEY_PPAGE, KEY_PAGE_UP_TERMINFO):
-                idx = max(0, idx - 10)
+        self.stdscr.nodelay(False)
+        try:
+            while True:
+                self._draw_toc(entries, idx)
+                ch = self.stdscr.getch()
+                if ch == curses.KEY_RESIZE:
+                    self._handle_resize()
+                    idx = max(0, min(idx, len(entries) - 1))
+                    continue
+                if ch in (ord("q"), KEY_ESCAPE):
+                    return
+                if ch in (curses.KEY_DOWN, ord("j")):
+                    idx = min(len(entries) - 1, idx + 1)
+                elif ch in (curses.KEY_UP, ord("k")):
+                    idx = max(0, idx - 1)
+                elif ch in (KEY_ENTER, KEY_LF, curses.KEY_ENTER, curses.KEY_RIGHT):
+                    self.chapter_index = entries[idx].spine_index
+                    self.page_index = 0
+                    return
+                elif ch in (curses.KEY_NPAGE, KEY_PAGE_DOWN_TERMINFO):
+                    idx = min(len(entries) - 1, idx + 10)
+                elif ch in (curses.KEY_PPAGE, KEY_PAGE_UP_TERMINFO):
+                    idx = max(0, idx - 10)
+        finally:
+            self.stdscr.nodelay(True)
 
     def _draw_toc(self, entries: List[TocEntry], selected: int):
         self.stdscr.erase()
@@ -2470,22 +2535,38 @@ Press any key..."""
             self.show_info_popup("Search", f"Not found: {query}")
 
     def search(self, query: str) -> bool:
-        q = ascii_sanitize(query).lower()
+        q = " ".join(ascii_sanitize(query).lower().split())
         start_ch = self.chapter_index
         for offset in range(len(self.book.chapters)):
             ch_idx = (start_ch + offset) % len(self.book.chapters)
             # Search against the styled pages that are actually rendered,
             # so the page calculation matches what the user sees.
             styled_pages = self._get_styled_pages(ch_idx)
-            for page_idx, page in enumerate(styled_pages):
-                for line_fragments in page:
-                    line_text = ''.join(fragment_text for fragment_text, _ in line_fragments).lower()
-                    pos = line_text.find(q)
-                    if pos != -1:
-                        self.chapter_index = ch_idx
-                        self.page_index = page_idx
-                        self.show_info_popup("Search", "Found in chapter %d" % (ch_idx + 1))
-                        return True
+            # Build one normalized string per rendered page, then search the
+            # joined chapter so phrases crossing line or page boundaries work.
+            page_texts = [
+                " ".join(
+                    " ".join(''.join(
+                        fragment_text for fragment_text, _ in line_fragments
+                    ).split())
+                    for line_fragments in page
+                ).lower()
+                for page in styled_pages
+            ]
+            chapter_text = " ".join(page_texts)
+            match_pos = chapter_text.find(q)
+            if match_pos != -1:
+                cursor = 0
+                page_idx = 0
+                for index, page_text in enumerate(page_texts):
+                    if match_pos <= cursor + len(page_text):
+                        page_idx = index
+                        break
+                    cursor += len(page_text) + 1
+                self.chapter_index = ch_idx
+                self.page_index = page_idx
+                self.show_info_popup("Search", "Found in chapter %d" % (ch_idx + 1))
+                return True
         return False
 
     def set_bookmark(self):
@@ -2502,13 +2583,13 @@ Press any key..."""
             self.show_info_popup("Load", "Load cancelled")
             return
         self._save_position()
-        # Close the old book's ZipFile before loading a new one
-        self.book.close()
         try:
-            new_book = EpubBook(selected)
+            new_book = EpubBook(selected, use_css=self.book.use_css)
         except Exception as exc:
             self.show_info_popup("Error", f"Failed to open: {exc}", is_error=True)
             return
+        # Only close the active book after the replacement has loaded fully.
+        self.book.close()
         self.load_book(new_book, use_saved_position=True)
 
 
@@ -2528,6 +2609,9 @@ def usage() -> str:
         "  h             help\n"
         "  H             toggle top title bar\n"
         "  g             toggle heading style (bold/reverse)\n"
+        "  j             toggle text justification\n"
+        "  d             select a word for dictionary lookup\n"
+        "  ?             type a word for dictionary lookup\n"
         "  q             quit\n"
         "\n"
         "Options:\n"

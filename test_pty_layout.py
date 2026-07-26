@@ -58,10 +58,7 @@ def runner(stdscr):
     store = FakeStateStore()
     ui = mod.ReaderUI(stdscr, book, store)
     ui.has_colors = False
-    # Skip the info popup that blocks on getch
-    ui.draw()
-    # Just draw one frame then exit
-    sys.exit(0)
+    ui.run()
 
 import curses
 curses.wrapper(runner)
@@ -93,6 +90,28 @@ def set_size(fd, cols, rows):
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
 
 
+def stop_child(pid, fd):
+    """Ask the child to quit, then enforce a bounded shutdown."""
+    try:
+        os.write(fd, b'q')
+    except OSError:
+        pass
+    deadline = time.time() + 1.0
+    while time.time() < deadline:
+        try:
+            waited, _status = os.waitpid(pid, os.WNOHANG)
+            if waited == pid:
+                return
+        except ChildProcessError:
+            return
+        drain(fd, 0.05)
+    try:
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
+    except (OSError, ChildProcessError):
+        pass
+
+
 def drain(fd, seconds):
     buf = b''
     deadline = time.time() + seconds
@@ -109,13 +128,20 @@ def drain(fd, seconds):
     return buf
 
 
-def check_screen(screen, cols, rows, label):
-    """Verify the rendered grid has no wrap-around / overflow artifacts."""
+def check_screen(screen, cols, rows, label, raw_data, post_resize_data=None):
+    """Verify real curses produced the expected reader screen without errors."""
     problems = []
-    lines = screen.display
-    for y, line in enumerate(lines):
-        if len(line) > cols:
-            problems.append(f"{label}: row {y} longer than {cols} cols ({len(line)})")
+    decoded = raw_data.decode('utf-8', errors='replace')
+    if "Traceback" in decoded:
+        problems.append(f"{label}: child emitted a traceback")
+    if not any(line.strip() for line in screen.display):
+        problems.append(f"{label}: rendered screen is blank")
+    if post_resize_data is not None and not post_resize_data:
+        problems.append(f"{label}: child emitted no post-resize redraw")
+    if "Test Book Title" not in screen.display[0]:
+        problems.append(f"{label}: expected title is missing from top row")
+    if "Chapter" not in screen.display[rows - 1]:
+        problems.append(f"{label}: expected footer is missing from new bottom row")
     return problems
 
 
@@ -123,28 +149,40 @@ def render(cols, rows, resize_from=None, show=False):
     """Run termepub at (cols, rows), optionally after a live resize."""
     if resize_from:
         pid, fd = spawn(*resize_from)
-        drain(fd, 2)
+        initial_data = drain(fd, 0.5)
+        os.write(fd, b' ')  # dismiss the Loaded popup and enter the live main loop
+        initial_data += drain(fd, 0.5)
+
+        screen = pyte.Screen(resize_from[0], resize_from[1])
+        stream = pyte.Stream(screen)
+        stream.feed(initial_data.decode('utf-8', errors='replace'))
+
         set_size(fd, cols, rows)
         os.kill(pid, signal.SIGWINCH)
-        data = drain(fd, 2.0)
+        data = drain(fd, 0.7)
+        screen.resize(lines=rows, columns=cols)
+        stream.feed(data.decode('utf-8', errors='replace'))
+        all_data = initial_data + data
         label = f"{resize_from[0]}x{resize_from[1]}->{cols}x{rows}"
     else:
         pid, fd = spawn(cols, rows)
-        data = drain(fd, 2.0)
+        data = drain(fd, 0.5)
+        os.write(fd, b' ')  # dismiss the Loaded popup
+        data += drain(fd, 0.5)
+        all_data = data
         label = f"{cols}x{rows}"
 
-    try:
-        os.kill(pid, signal.SIGKILL)
-        os.waitpid(pid, 0)
-    except OSError:
-        pass
+        screen = pyte.Screen(cols, rows)
+        stream = pyte.Stream(screen)
+        stream.feed(data.decode('utf-8', errors='replace'))
+
+    stop_child(pid, fd)
     os.close(fd)
 
-    screen = pyte.Screen(cols, rows)
-    stream = pyte.Stream(screen)
-    stream.feed(data.decode('utf-8', errors='replace'))
-
-    problems = check_screen(screen, cols, rows, label)
+    problems = check_screen(
+        screen, cols, rows, label, all_data,
+        post_resize_data=data if resize_from else None,
+    )
     if show:
         print(f"--- {label} ---")
         for y, line in enumerate(screen.display):
