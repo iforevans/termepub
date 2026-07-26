@@ -2,7 +2,7 @@
 
 A terminal-based (NCurses) ePUB reader with a clean, keyboard-driven interface. Built for offline reading in terminal environments.
 
-**Version:** 0.5.6 (2026-07-26)
+**Version:** 1.0.0 (2026-07-26)
 
 ## Features
 
@@ -112,6 +112,18 @@ Ifor Evans - [@iforevans](https://github.com/iforevans)
 ---
 
 ## Recent Changes
+
+### v1.0.0 (2026-07-26) - First Stable Release
+
+termepub-reader is now considered stable for daily use. The 1.0 release promotes the hardened v0.5.6 codebase after comprehensive parser, pagination, terminal, malformed-input, and real-PTY testing. It introduces no incompatible command-line or state-file changes.
+
+**Stability baseline:**
+- Reliable EPUB parsing, navigation, pagination, progress, search, bookmarks, themes, CSS styling, dictionary lookup, and file switching
+- Bounded handling of untrusted EPUB archive content
+- Responsive curses layout with verified live terminal resizing
+- Zero-redraw idle loop and blocking modal input
+- No runtime dependencies beyond Python's standard library
+- 22 focused regression tests plus 1,269 responsive layout checks and 14 real-PTY scenarios
 
 ### v0.5.6 (2026-07-26) - Reliability, Security & Test Coverage
 

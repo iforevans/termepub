@@ -1,8 +1,10 @@
 # Release Notes
 
-## termepub-reader v0.5.6 — 2026-07-26
+## termepub-reader v1.0.0 — 2026-07-26
 
-v0.5.6 is a reliability and security release focused on making long reading sessions quieter, pagination consistent, malformed EPUB handling predictable, and the test suite worthy of the word “test”.
+v1.0.0 is the first stable termepub-reader release. It promotes the hardened v0.5.6 codebase after comprehensive parser, pagination, terminal, malformed-input, and real-PTY testing. The command line and state-file format remain compatible.
+
+The 1.0 baseline is suitable for daily reading: core navigation, search, bookmarks, themes, CSS rendering, dictionary lookup, file switching, terminal resizing, and hostile-input limits are implemented and covered by automated tests.
 
 ### Highlights
 

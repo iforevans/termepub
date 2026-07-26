@@ -34,7 +34,7 @@ from html.parser import HTMLParser
 from typing import Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 
-__version__ = "0.5.6"
+__version__ = "1.0.0"
 
 _DEBUG = os.environ.get("TERMEPUB_DEBUG", "").lower() in ("1", "true", "yes")
 
