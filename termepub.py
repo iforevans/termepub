@@ -17,13 +17,16 @@ import curses
 import fcntl
 import hashlib
 import html
+import io
 import json
 import os
 import re
+import signal
 import struct
 import sys
 import textwrap
 import termios
+import time
 import unicodedata
 import urllib.request
 import zipfile
@@ -1002,99 +1005,102 @@ class FilePicker:
         waiting_for_letter = False
         waiting_letter_buffer = ""
         search_input = ""
-        
-        while True:
-            self.draw()
-            
-            # Handle waiting for letter mode
-            if waiting_for_letter:
+        self.stdscr.nodelay(False)
+        try:
+            while True:
+                self.draw()
+
+                # Handle waiting for letter mode
+                if waiting_for_letter:
+                    ch = self.stdscr.getch()
+                    if ch == KEY_ESCAPE:  # Esc - cancel
+                        waiting_for_letter = False
+                        self.status = "Jump cancelled"
+                    elif ch in (KEY_ENTER, KEY_LF):  # Enter - use buffered letter
+                        if waiting_letter_buffer:
+                            self.jump_to_letter(waiting_letter_buffer)
+                        waiting_for_letter = False
+                        waiting_letter_buffer = ""
+                    elif ch in (KEY_BACKSPACE_ALT, curses.KEY_BACKSPACE, KEY_BACKSPACE_CTRL):  # Backspace - clear buffer
+                        waiting_letter_buffer = ""
+                        self.status = "Jump: "
+                    elif 32 <= ch <= 126:  # Printable character
+                        waiting_letter_buffer = chr(ch)
+                        self.status = f"Jump to: {waiting_letter_buffer.upper()}"
+                    continue
+
+                # Handle search mode
+                if self.in_search_mode:
+                    ch = self.stdscr.getch()
+                    if ch == KEY_ESCAPE:  # Esc - cancel search
+                        self.in_search_mode = False
+                        search_input = ""
+                        self.filter_text = ""
+                        self.apply_filter()
+                        self.status = "Search cancelled"
+                    elif ch in (KEY_ENTER, KEY_LF):  # Enter - exit search mode
+                        self.in_search_mode = False
+                        search_input = ""
+                        self.status = f"Filter: {self.filter_text}" if self.filter_text else ""
+                    elif ch in (KEY_BACKSPACE_ALT, curses.KEY_BACKSPACE, KEY_BACKSPACE_CTRL):  # Backspace
+                        search_input = search_input[:-1]
+                        self.filter_text = search_input
+                        self.apply_filter()
+                    elif 32 <= ch <= 126:  # Printable character
+                        search_input += chr(ch)
+                        self.filter_text = search_input
+                        self.selected = 0  # Reset selection when filtering
+                        self.apply_filter()
+                    continue
+
                 ch = self.stdscr.getch()
-                if ch == KEY_ESCAPE:  # Esc - cancel
-                    waiting_for_letter = False
-                    self.status = "Jump cancelled"
-                elif ch in (KEY_ENTER, KEY_LF):  # Enter - use buffered letter
-                    if waiting_letter_buffer:
-                        self.jump_to_letter(waiting_letter_buffer)
-                    waiting_for_letter = False
+                if ch in (KEY_ESCAPE, ord("q"), ord("Q")):
+                    return None
+
+                # Jump-to-letter mode: 'j' followed by letter
+                if ch == ord("j") and not waiting_for_letter:
+                    waiting_for_letter = True
                     waiting_letter_buffer = ""
-                elif ch in (KEY_BACKSPACE_ALT, curses.KEY_BACKSPACE, KEY_BACKSPACE_CTRL):  # Backspace - clear buffer
-                    waiting_letter_buffer = ""
-                    self.status = "Jump: "
-                elif 32 <= ch <= 126:  # Printable character
-                    waiting_letter_buffer = chr(ch)
-                    self.status = f"Jump to: {waiting_letter_buffer.upper()}"
-                continue
-            
-            # Handle search mode
-            if self.in_search_mode:
-                ch = self.stdscr.getch()
-                if ch == KEY_ESCAPE:  # Esc - cancel search
-                    self.in_search_mode = False
+                    self.status = "Jump to: "
+                    continue
+
+                # Search mode: 's' to start typing filter
+                if ch == ord("s") and not self.in_search_mode:
+                    self.in_search_mode = True
                     search_input = ""
                     self.filter_text = ""
-                    self.apply_filter()
-                    self.status = "Search cancelled"
-                elif ch in (KEY_ENTER, KEY_LF):  # Enter - exit search mode
-                    self.in_search_mode = False
-                    search_input = ""
-                    self.status = f"Filter: {self.filter_text}" if self.filter_text else ""
-                elif ch in (KEY_BACKSPACE_ALT, curses.KEY_BACKSPACE, KEY_BACKSPACE_CTRL):  # Backspace
-                    search_input = search_input[:-1]
-                    self.filter_text = search_input
-                    self.apply_filter()
-                elif 32 <= ch <= 126:  # Printable character
-                    search_input += chr(ch)
-                    self.filter_text = search_input
-                    self.selected = 0  # Reset selection when filtering
-                    self.apply_filter()
-                continue
-            
-            ch = self.stdscr.getch()
-            if ch in (KEY_ESCAPE, ord("q"), ord("Q")):
-                return None
-            
-            # Jump-to-letter mode: 'j' followed by letter
-            if ch == ord("j") and not waiting_for_letter:
-                waiting_for_letter = True
-                waiting_letter_buffer = ""
-                self.status = "Jump to: "
-                continue
-            
-            # Search mode: 's' to start typing filter
-            if ch == ord("s") and not self.in_search_mode:
-                self.in_search_mode = True
-                search_input = ""
-                self.filter_text = ""
-                self.selected = 0
-                self.status = "Search: "
-                continue
-            
-            if ch in (curses.KEY_UP, ord("k")):
-                if self.selected > 0:
-                    self.selected -= 1
-            elif ch in (curses.KEY_DOWN, ord("j")):
-                if self.selected + 1 < len(self.filtered_entries):
-                    self.selected += 1
-            elif ch in (curses.KEY_NPAGE, KEY_PAGE_DOWN_TERMINFO):
-                self.selected = min(len(self.filtered_entries) - 1, self.selected + max(1, self.body_height()))
-            elif ch in (curses.KEY_PPAGE, KEY_PAGE_UP_TERMINFO):
-                self.selected = max(0, self.selected - max(1, self.body_height()))
-            elif ch == curses.KEY_LEFT:
-                parent = os.path.dirname(self.current_dir)
-                if parent and parent != self.current_dir:
-                    self.current_dir = parent
                     self.selected = 0
-                    self.refresh_entries()
-            elif ch in (KEY_ENTER, KEY_LF, curses.KEY_ENTER, curses.KEY_RIGHT):
-                if not self.filtered_entries:
+                    self.status = "Search: "
                     continue
-                _label, full, is_dir = self.filtered_entries[self.selected]
-                if is_dir:
-                    self.current_dir = full
-                    self.selected = 0
-                    self.refresh_entries()
-                else:
-                    return full
+
+                if ch in (curses.KEY_UP, ord("k")):
+                    if self.selected > 0:
+                        self.selected -= 1
+                elif ch in (curses.KEY_DOWN, ord("j")):
+                    if self.selected + 1 < len(self.filtered_entries):
+                        self.selected += 1
+                elif ch in (curses.KEY_NPAGE, KEY_PAGE_DOWN_TERMINFO):
+                    self.selected = min(len(self.filtered_entries) - 1, self.selected + max(1, self.body_height()))
+                elif ch in (curses.KEY_PPAGE, KEY_PAGE_UP_TERMINFO):
+                    self.selected = max(0, self.selected - max(1, self.body_height()))
+                elif ch == curses.KEY_LEFT:
+                    parent = os.path.dirname(self.current_dir)
+                    if parent and parent != self.current_dir:
+                        self.current_dir = parent
+                        self.selected = 0
+                        self.refresh_entries()
+                elif ch in (KEY_ENTER, KEY_LF, curses.KEY_ENTER, curses.KEY_RIGHT):
+                    if not self.filtered_entries:
+                        continue
+                    _label, full, is_dir = self.filtered_entries[self.selected]
+                    if is_dir:
+                        self.current_dir = full
+                        self.selected = 0
+                        self.refresh_entries()
+                    else:
+                        return full
+        finally:
+            self.stdscr.nodelay(True)
 
     def body_height(self) -> int:
         h, _ = self.stdscr.getmaxyx()
@@ -1166,7 +1172,7 @@ class ReaderUI:
         self.pages_cache: Dict[Tuple[int, int, int, str], List[List[str]]] = {}
         self.pages_attrs_cache: Dict[Tuple, List[List[List[Tuple[str, int]]]]] = {}  # Cache pages with attrs by chapter
         self.running = True
-        self._last_terminal_size = None
+        self._pending_resize = False
         self.theme = self.store.get_theme()
         self.show_header = self.store.get_show_header()
         self.justify_text = self.store.get_justify_text()
@@ -1203,20 +1209,17 @@ class ReaderUI:
         except OSError:
             return None
 
-    def _handle_resize(self, new_size):
+    def _handle_resize(self):
         """Update curses geometry for new terminal size, clear caches."""
         try:
-            curses.resizeterm(new_size[0], new_size[1])
-        except (curses.error, AttributeError):
-            pass
-        try:
-            curses.doupdate()
-        except (curses.error, AttributeError):
+            self.stdscr.clear()
+        except curses.error:
             pass
         self.pages_cache.clear()
         self.pages_attrs_cache.clear()
         self.total_pages = self._compute_total_pages()
         self._ensure_page_in_range()
+        self._pending_resize = False
 
     def load_book(self, book: EpubBook, use_saved_position: bool = True):
         self.book = book
@@ -1464,6 +1467,7 @@ class ReaderUI:
         self.stdscr.keypad(False)
         curses.echo()
         curses.curs_set(1)
+        self.stdscr.nodelay(False)
 
         try:
             # Show prompt
@@ -1508,6 +1512,7 @@ class ReaderUI:
             curses.noecho()
             curses.curs_set(0)
             self.stdscr.keypad(True)
+            self.stdscr.nodelay(True)
         
         if word is None:
             return  # Cancelled
@@ -1784,8 +1789,10 @@ class ReaderUI:
             pass  # Terminal too small - skip prompt text
         
         self.stdscr.refresh()
-        # Wait for any key
+        # Wait for any key — switch to blocking mode for the getch
+        self.stdscr.nodelay(False)
         self.stdscr.getch()
+        self.stdscr.nodelay(True)
         # Clear status message after popup is dismissed
         self.status_message = ""
     
@@ -1837,20 +1844,43 @@ Press any key..."""
     def run(self):
         curses.curs_set(0)
         self.stdscr.keypad(True)
+        self.stdscr.nodelay(True)
         self.setup_colors()
         self._ensure_page_in_range()
+
+        # Install SIGWINCH handler — sets flag and calls resizeterm only.
+        # Heavy work (clear, cache invalidation) is deferred to main loop.
+        def _on_sigwinch(signum, frame, ui=self):
+            ui._pending_resize = True
+            size = ui._true_terminal_size()
+            if size:
+                try:
+                    curses.resizeterm(size[0], size[1])
+                except (curses.error, AttributeError):
+                    pass
+
+        try:
+            signal.signal(signal.SIGWINCH, _on_sigwinch)
+        except (OSError, ValueError):
+            pass
+
         self.show_info_popup("Loaded", f"Loaded: {self.book.title}")
         self.draw()
         while self.running:
-            # Poll for terminal resize each iteration — avoids signal handler
-            # which corrupts curses' input buffer.
-            ts = self._true_terminal_size()
-            if ts and ts != self._last_terminal_size:
-                self._last_terminal_size = ts
-                self._handle_resize(ts)
+            if self._pending_resize:
+                self._handle_resize()
             self._ensure_page_in_range()
             self.draw()
-            ch = self.stdscr.getch()
+            try:
+                ch = self.stdscr.getch()
+            except curses.error:
+                ch = -1
+            if ch == -1:
+                time.sleep(0.1)
+                continue
+            if ch == curses.KEY_RESIZE:
+                self._pending_resize = True
+                continue
             self.handle_key(ch)
         self._save_position()
 
@@ -2261,6 +2291,7 @@ Press any key..."""
         h, w = self.stdscr.getmaxyx()
         curses.curs_set(1)
         curses.echo()
+        self.stdscr.nodelay(False)
         try:
             self.stdscr.move(h - 1, 0)
             self.stdscr.clrtoeol()
@@ -2271,6 +2302,7 @@ Press any key..."""
         finally:
             curses.noecho()
             curses.curs_set(0)
+            self.stdscr.nodelay(True)
 
     def handle_key(self, ch: int):
         # Handle selection mode first
