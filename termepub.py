@@ -11,7 +11,7 @@ Features:
 - Justified text mode toggle (j key)
 - Word selection mode for dictionary lookup (d key + arrow keys)
 
-Version: 1.0.0
+Version: 1.0.1
 """
 import curses
 import fcntl
@@ -34,7 +34,7 @@ from html.parser import HTMLParser
 from typing import Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 _DEBUG = os.environ.get("TERMEPUB_DEBUG", "").lower() in ("1", "true", "yes")
 
@@ -1943,7 +1943,7 @@ Press any key..."""
         self.store.save()
 
     def _ensure_page_in_range(self):
-        pages = self._get_plain_pages(self.chapter_index)
+        pages = self._get_styled_pages(self.chapter_index)
         if not pages:
             self.page_index = 0
             return
