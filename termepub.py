@@ -11,7 +11,7 @@ Features:
 - Justified text mode toggle (j key)
 - Word selection mode for dictionary lookup (d key + arrow keys)
 
-Version: 0.5.5
+Version: 1.0.0
 """
 import curses
 import fcntl
