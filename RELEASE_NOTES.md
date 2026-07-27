@@ -1,5 +1,9 @@
 # Release Notes
 
+## termepub-reader v1.0.1 — 2026-07-27
+
+Performance fix: `_ensure_page_in_range` now calls `_get_styled_pages` directly instead of going through `_get_plain_pages`, eliminating an unnecessary fragment-to-plain-text conversion on every page navigation and resize event.
+
 ## termepub-reader v1.0.0 — 2026-07-26
 
 v1.0.0 is the first stable termepub-reader release. It promotes the hardened v0.5.6 codebase after comprehensive parser, pagination, terminal, malformed-input, and real-PTY testing. The command line and state-file format remain compatible.
