@@ -2635,6 +2635,10 @@ def usage() -> str:
         "  --no-css      disable inline CSS styling (faster on slow devices)\n"
         "  --version     show version number and exit\n"
         "\n"
+        "Dictionary:\n"
+        "  Dictionary files bundled alongside the script are moved to\n"
+        "  ~/.config/termepub/ on first launch.\n"
+        "\n"
         "CSS Support:\n"
         "  Inline CSS styling is now rendered (bold, underline, colors).\n"
         "  Uses --no-css to disable on slow devices.\n"
@@ -2646,6 +2650,15 @@ def main(argv: List[str]) -> int:
     if not os.environ.get('TERM') or os.environ.get('TERM') == 'dumb':
         os.environ['TERM'] = 'xterm'
     
+    # Install bundled dictionary files from next to the script into DICT_DIR.
+    installed = []
+    for name in ("ecdict_index.json", "words.txt"):
+        target = _try_install_bundle(name)
+        if target:
+            installed.append(name)
+    if installed:
+        sys.stderr.write(f"Installed to {DICT_DIR}: {', '.join(installed)}\n")
+
     if len(argv) >= 2 and argv[1] == "--version":
         print(f"termepub-reader {__version__}")
         return 0
