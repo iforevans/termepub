@@ -95,7 +95,7 @@ The reader now supports inline CSS styling from EPUB files:
 
 - Python 3.9+
 - No external dependencies (uses only stdlib: `zipfile`, `xml.etree`, `html.parser`, `curses`)
-- Dictionary file (`ecdict_index.json`) included in repository (21MB)
+- Dictionary file (`ecdict_index.json`) auto-installed to `~/.config/termepub/` on first run (21MB)
 
 ## State
 

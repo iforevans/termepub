@@ -43,7 +43,7 @@ _DEBUG = os.environ.get("TERMEPUB_DEBUG", "").lower() in ("1", "true", "yes")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DICT_DIR = os.path.join(os.path.expanduser("~"), ".config", "termepub")
 WORD_LIST_PATH = os.path.join(DICT_DIR, "words.txt")
-EC_DICT_INDEX_PATH = os.path.join(SCRIPT_DIR, "ecdict_index.json")
+EC_DICT_INDEX_PATH = os.path.join(DICT_DIR, "ecdict_index.json")
 _ecdict_index = None
 _word_set: Optional[set] = None
 
@@ -932,17 +932,37 @@ class StateStore:
 
 
 
+def _try_install_bundle(name: str) -> Optional[str]:
+    """Try to copy a bundled data file from next to the script into DICT_DIR."""
+    bundled = os.path.join(SCRIPT_DIR, name)
+    if not os.path.isfile(bundled):
+        return None
+    target = os.path.join(DICT_DIR, name)
+    if os.path.isfile(target):
+        return target
+    try:
+        os.makedirs(DICT_DIR, exist_ok=True)
+        import shutil
+        shutil.copy2(bundled, target)
+        return target
+    except Exception:
+        return None
+
+
 def load_ecdict_index():
     """Load ECDICT dictionary index from JSON file."""
     global _ecdict_index
     if _ecdict_index is not None:
         return _ecdict_index
 
-    if not os.path.exists(EC_DICT_INDEX_PATH):
+    target = EC_DICT_INDEX_PATH
+    if not os.path.isfile(target):
+        target = _try_install_bundle("ecdict_index.json")
+    if not target:
         return None
 
     try:
-        with open(EC_DICT_INDEX_PATH, 'r') as f:
+        with open(target, 'r') as f:
             _ecdict_index = json.load(f)
         return _ecdict_index
     except Exception:
@@ -955,12 +975,16 @@ def load_word_set():
     if _word_set is not None:
         return _word_set
 
-    if not os.path.exists(WORD_LIST_PATH):
+    target = WORD_LIST_PATH
+    if not os.path.isfile(target):
+        target = _try_install_bundle("words.txt")
+
+    if not target:
         _word_set = set()  # Sentinel: file doesn't exist, don't retry
         return _word_set
 
     try:
-        with open(WORD_LIST_PATH, 'r') as f:
+        with open(target, 'r') as f:
             _word_set = {line.strip().lower() for line in f if line.strip()}
     except Exception:
         _word_set = set()
