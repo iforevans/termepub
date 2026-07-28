@@ -11,7 +11,7 @@ Features:
 - Justified text mode toggle (j key)
 - Word selection mode for dictionary lookup (d key + arrow keys)
 
-Version: 1.0.2
+Version: 1.0.3
 """
 import curses
 import fcntl
@@ -35,7 +35,7 @@ from html.parser import HTMLParser
 from typing import Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 
-__version__ = "1.0.2"
+__version__ = "1.0.3"
 
 _DEBUG = os.environ.get("TERMEPUB_DEBUG", "").lower() in ("1", "true", "yes")
 
@@ -212,7 +212,6 @@ def ascii_sanitize(text: str) -> str:
     text = text.replace("\u2593", "##")
     text = unicodedata.normalize("NFKC", text)
     # Keep only ASCII characters and whitespace (mapped to space).
-    # str.isprintable + ord check avoids per-character .isspace() call.
     return ''.join(
         c if ord(c) < 128 else (' ' if c.isspace() else '')
         for c in text
@@ -1308,7 +1307,7 @@ class ReaderUI:
         self.selected_word_start = 0      # Character start position within line
         self.selected_word_end = 0        # Character end position within line
         self.all_word_positions: List[Tuple[int, int, int]] = []  # List of (line, start, end) for all words
-        self._selection_index: int = 0  # Cached index into all_word_positions
+        self._selection_index: int = 0   # Cached index into all_word_positions
         self.load_book(book, use_saved_position=True)
 
     @staticmethod
@@ -1681,6 +1680,8 @@ class ReaderUI:
             return
 
         current_idx = self._selection_index
+        # The cached index can be stale if the page changed while in selection
+        # mode (e.g., resize repaged the content). Reset to first word if out of range.
         if not (0 <= current_idx < len(self.all_word_positions)):
             current_idx = 0
             self._selection_index = 0

@@ -2,7 +2,7 @@
 
 A terminal-based (NCurses) ePUB reader with a clean, keyboard-driven interface. Built for offline reading in terminal environments.
 
-**Version:** 1.0.2 (2026-07-28)
+**Version:** 1.0.3 (2026-07-28)
 
 ## Features
 
@@ -112,6 +112,12 @@ Ifor Evans - [@iforevans](https://github.com/iforevans)
 ---
 
 ## Recent Changes
+
+### v1.0.3 (2026-07-28) - Code Quality
+
+- Fixed misleading comment in `ascii_sanitize`
+- Added clarifying comment in `_navigate_selection` for stale index handling
+- Minor indentation consistency fix
 
 ### v1.0.2 (2026-07-28) - Performance & Correctness
 

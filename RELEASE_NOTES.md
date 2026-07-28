@@ -1,5 +1,15 @@
 # Release Notes
 
+## termepub-reader v1.0.3 — 2026-07-28
+
+Follow-up to v1.0.2 with minor code quality improvements from review.
+
+### Changes
+
+- Fixed misleading comment in `ascii_sanitize` that claimed `.isspace()` was avoided
+- Added clarifying comment in `_navigate_selection` explaining why the cached `_selection_index` can become stale after page changes
+- Minor indentation consistency fix for `_selection_index` initialization
+
 ## termepub-reader v1.0.2 — 2026-07-28
 
 Follow-up to v1.0.1 with performance improvements and correctness fixes.
