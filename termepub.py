@@ -933,7 +933,7 @@ class StateStore:
 
 
 def _try_install_bundle(name: str) -> Optional[str]:
-    """Try to copy a bundled data file from next to the script into DICT_DIR."""
+    """Move a bundled data file from next to the script into DICT_DIR."""
     bundled = os.path.join(SCRIPT_DIR, name)
     if not os.path.isfile(bundled):
         return None
@@ -942,8 +942,7 @@ def _try_install_bundle(name: str) -> Optional[str]:
         return target
     try:
         os.makedirs(DICT_DIR, exist_ok=True)
-        import shutil
-        shutil.copy2(bundled, target)
+        os.replace(bundled, target)
         return target
     except Exception:
         return None
