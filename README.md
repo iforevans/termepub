@@ -2,7 +2,7 @@
 
 A terminal-based (NCurses) ePUB reader with a clean, keyboard-driven interface. Built for offline reading in terminal environments.
 
-**Version:** 1.0.1 (2026-07-27)
+**Version:** 1.0.2 (2026-07-28)
 
 ## Features
 
@@ -112,6 +112,15 @@ Ifor Evans - [@iforevans](https://github.com/iforevans)
 ---
 
 ## Recent Changes
+
+### v1.0.2 (2026-07-28) - Performance & Correctness
+
+- `next_page`/`prev_page` now call `_get_styled_pages` directly, matching the v1.0.1 fix for `_ensure_page_in_range`
+- `hex_to_16_color` is memoized with `@functools.lru_cache(maxsize=256)` to avoid repeated color-distance computation during rendering
+- Word-selection navigation caches the current index instead of scanning `all_word_positions` on every arrow key press
+- Removed redundant `_ensure_page_in_range` call from `_handle_resize` (the main loop already handles it via `needs_draw`)
+- `EpubBook.__del__` wrapped in try/except to prevent interpreter-shutdown crashes
+- Consolidated duplicate `j` key binding in `usage()` output
 
 ### v1.0.1 (2026-07-27) - Performance Fix
 

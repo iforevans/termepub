@@ -11,10 +11,11 @@ Features:
 - Justified text mode toggle (j key)
 - Word selection mode for dictionary lookup (d key + arrow keys)
 
-Version: 1.0.1
+Version: 1.0.2
 """
 import curses
 import fcntl
+import functools
 import hashlib
 import html
 import io
@@ -34,7 +35,7 @@ from html.parser import HTMLParser
 from typing import Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 
 _DEBUG = os.environ.get("TERMEPUB_DEBUG", "").lower() in ("1", "true", "yes")
 
@@ -210,13 +211,12 @@ def ascii_sanitize(text: str) -> str:
     text = text.replace("\u2592", "::")
     text = text.replace("\u2593", "##")
     text = unicodedata.normalize("NFKC", text)
-    result = []
-    for char in text:
-        if ord(char) < 128:
-            result.append(char)
-        elif char.isspace():
-            result.append(' ')
-    return ''.join(result)
+    # Keep only ASCII characters and whitespace (mapped to space).
+    # str.isprintable + ord check avoids per-character .isspace() call.
+    return ''.join(
+        c if ord(c) < 128 else (' ' if c.isspace() else '')
+        for c in text
+    )
 
 
 def parse_inline_style(style_attr: str) -> dict:
@@ -253,6 +253,7 @@ def parse_inline_style(style_attr: str) -> dict:
     return styles
 
 
+@functools.lru_cache(maxsize=256)
 def hex_to_16_color(hex_color: str) -> Optional[int]:
     """Convert a hex color to the nearest 16-color ANSI palette.
     
@@ -549,7 +550,10 @@ class EpubBook:
 
     def __del__(self):
         """Ensure ZipFile is closed when the book is garbage collected."""
-        self.close()
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def _read_member(self, member: str) -> bytes:
         """Read a bounded text member, rejecting suspicious archive entries."""
@@ -1304,6 +1308,7 @@ class ReaderUI:
         self.selected_word_start = 0      # Character start position within line
         self.selected_word_end = 0        # Character end position within line
         self.all_word_positions: List[Tuple[int, int, int]] = []  # List of (line, start, end) for all words
+        self._selection_index: int = 0  # Cached index into all_word_positions
         self.load_book(book, use_saved_position=True)
 
     @staticmethod
@@ -1337,7 +1342,6 @@ class ReaderUI:
             pass
         self.pages_attrs_cache.clear()
         self.total_pages = self._compute_total_pages()
-        self._ensure_page_in_range()
         self._pending_resize = False
 
     def load_book(self, book: EpubBook, use_saved_position: bool = True):
@@ -1553,6 +1557,7 @@ class ReaderUI:
             self.selected_line = line
             self.selected_word_start = start
             self.selected_word_end = end
+            self._selection_index = 0
             self.draw()
         else:
             # No words on page
@@ -1674,60 +1679,48 @@ class ReaderUI:
         """
         if not self.in_selection_mode or not self.all_word_positions:
             return
-            
-        # Find current selection index
-        current_idx = None
-        for i, pos in enumerate(self.all_word_positions):
-            if pos == (self.selected_line, self.selected_word_start, self.selected_word_end):
-                current_idx = i
-                break
-        
-        if current_idx is None:
-            # Default to first word
-            if self.all_word_positions:
-                line, start, end = self.all_word_positions[0]
-                self.selected_line = line
-                self.selected_word_start = start
-                self.selected_word_end = end
-                self.draw()
-            return
-        
+
+        current_idx = self._selection_index
+        if not (0 <= current_idx < len(self.all_word_positions)):
+            current_idx = 0
+            self._selection_index = 0
+
         current_line, current_start, current_end = self.all_word_positions[current_idx]
         
         # Navigate based on direction
         if direction == "left" and current_idx > 0:
-            # Previous word
-            line, start, end = self.all_word_positions[current_idx - 1]
+            idx = current_idx - 1
+            line, start, end = self.all_word_positions[idx]
             self.selected_line = line
             self.selected_word_start = start
             self.selected_word_end = end
+            self._selection_index = idx
         elif direction == "right" and current_idx < len(self.all_word_positions) - 1:
-            # Next word
-            line, start, end = self.all_word_positions[current_idx + 1]
+            idx = current_idx + 1
+            line, start, end = self.all_word_positions[idx]
             self.selected_line = line
             self.selected_word_start = start
             self.selected_word_end = end
+            self._selection_index = idx
         elif direction == "up":
-            # Find word on previous line
             target_line = current_line - 1
-            # Search backwards for first word on target line
             for i in range(current_idx - 1, -1, -1):
                 line, start, end = self.all_word_positions[i]
                 if line <= target_line:
                     self.selected_line = line
                     self.selected_word_start = start
                     self.selected_word_end = end
+                    self._selection_index = i
                     break
         elif direction == "down":
-            # Find word on next line
             target_line = current_line + 1
-            # Search forwards for first word on target line
             for i in range(current_idx + 1, len(self.all_word_positions)):
                 line, start, end = self.all_word_positions[i]
                 if line >= target_line:
                     self.selected_line = line
                     self.selected_word_start = start
                     self.selected_word_end = end
+                    self._selection_index = i
                     break
         
         self.draw()
@@ -2417,7 +2410,7 @@ Press any key..."""
 
 
     def next_page(self):
-        pages = self._get_plain_pages(self.chapter_index)
+        pages = self._get_styled_pages(self.chapter_index)
         if self.page_index + 1 < len(pages):
             self.page_index += 1
         elif self.chapter_index + 1 < len(self.book.chapters):
@@ -2431,7 +2424,7 @@ Press any key..."""
             self.page_index -= 1
         elif self.chapter_index > 0:
             self.chapter_index -= 1
-            prev_pages = self._get_plain_pages(self.chapter_index)
+            prev_pages = self._get_styled_pages(self.chapter_index)
             self.page_index = max(0, len(prev_pages) - 1)
         else:
             self.show_info_popup("Info", "Start of book")
@@ -2604,12 +2597,11 @@ def usage() -> str:
         "  b             save bookmark\n"
         "  o             open book (file picker)\n"
         "  s             in picker: start live search/filter (type to filter)\n"
-        "  j             in picker: jump to book starting with letter (then type a-z)\n"
+        "  j             in picker: jump; in reader: toggle justify\n"
         "  m             toggle dark/light mode\n"
         "  h             help\n"
         "  H             toggle top title bar\n"
         "  g             toggle heading style (bold/reverse)\n"
-        "  j             toggle text justification\n"
         "  d             select a word for dictionary lookup\n"
         "  ?             type a word for dictionary lookup\n"
         "  q             quit\n"

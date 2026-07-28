@@ -1,5 +1,18 @@
 # Release Notes
 
+## termepub-reader v1.0.2 — 2026-07-28
+
+Follow-up to v1.0.1 with performance improvements and correctness fixes.
+
+### Changes
+
+- `next_page` and `prev_page` now call `_get_styled_pages` directly, completing the v1.0.1 optimization that eliminated the `_get_plain_pages` indirection across all navigation paths
+- `hex_to_16_color` is memoized with `@functools.lru_cache(maxsize=256)`, avoiding repeated regex parsing and Euclidean distance computation for repeated inline CSS colors during rendering
+- Word-selection navigation (`_navigate_selection`) caches the current index in `_selection_index`, replacing an O(n) linear scan on every arrow key press
+- Removed redundant `_ensure_page_in_range` call from `_handle_resize` — the main loop already handles page clamping via the `needs_draw` flag after resize
+- `EpubBook.__del__` wrapped in try/except to prevent potential crashes during Python interpreter shutdown when module state is partially torn down
+- Consolidated duplicate `j` key binding in `usage()` into a single context-aware line
+
 ## termepub-reader v1.0.1 — 2026-07-27
 
 Performance fix: `_ensure_page_in_range` now calls `_get_styled_pages` directly instead of going through `_get_plain_pages`, eliminating an unnecessary fragment-to-plain-text conversion on every page navigation and resize event.
