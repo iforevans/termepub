@@ -52,7 +52,7 @@ CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "termepub")
 STATE_FILE = os.path.join(CONFIG_DIR, "state.json")
 
 # Footer format string for status bar display (simplified - just position info)
-FOOTER_FORMAT = "Chapter {}/{} | Page {}/{} | {}% | {} | h=help"
+FOOTER_FORMAT = "termepub {} | Chapter {}/{} | Page {}/{} | {}% | h=help"
 FOOTER_FORMAT_SELECTION = (
     " SELECTION MODE - Arrow keys to navigate, Enter to lookup, Esc to cancel "
 )
@@ -1478,15 +1478,15 @@ class ReaderUI:
     def apply_theme(self) -> None:
         if not self.has_colors:
             self.header_attr = curses.A_REVERSE
-            self.footer_attr = curses.A_REVERSE
+            self.footer_attr = curses.A_BOLD
             self.selected_attr = curses.A_REVERSE
             self.heading_attr = curses.A_REVERSE | curses.A_BOLD
             return
         attr = curses.color_pair(COLOR_PAIR_INVERSE) if self.theme == "light" else curses.color_pair(COLOR_PAIR_DEFAULT)
         self.header_attr = attr
-        self.footer_attr = attr
+        self.footer_attr = curses.color_pair(COLOR_PAIR_TITLE) | curses.A_BOLD
         self.selected_attr = attr
-        # Yellow bold for headings (pair 3 is yellow, defined in setup_colors)
+        # Yellow bold for headings and footer (pair 3 is yellow, defined in setup_colors)
         self.heading_attr = curses.color_pair(COLOR_PAIR_TITLE) | curses.A_BOLD
 
     def styles_to_curses_attr(self, css_styles: dict) -> int:
@@ -2398,12 +2398,12 @@ SELECTION (d):
         else:
             # Simplified footer - just position info
             footer = FOOTER_FORMAT.format(
+                __version__,
                 self.chapter_index + 1,
                 len(self.book.chapters),
                 current_page,
                 total_pages,
                 progress_pct,
-                f"termepub {__version__}",
             )
         
         try:
