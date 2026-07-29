@@ -11,7 +11,7 @@ Features:
 - Justified text mode toggle (j key)
 - Word selection mode for dictionary lookup (d key + arrow keys)
 
-Version: 1.0.3
+Version: 1.0.4
 """
 import curses
 import fcntl
@@ -35,7 +35,7 @@ from html.parser import HTMLParser
 from typing import Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 
-__version__ = "1.0.3"
+__version__ = "1.0.4"
 
 _DEBUG = os.environ.get("TERMEPUB_DEBUG", "").lower() in ("1", "true", "yes")
 
@@ -46,6 +46,7 @@ WORD_LIST_PATH = os.path.join(DICT_DIR, "words.txt")
 EC_DICT_INDEX_PATH = os.path.join(DICT_DIR, "ecdict_index.json")
 _ecdict_index = None
 _word_set: Optional[set] = None
+_word_list: Optional[list] = None
 
 CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "termepub")
 STATE_FILE = os.path.join(CONFIG_DIR, "state.json")
@@ -62,6 +63,7 @@ KEY_ENTER = 13
 KEY_LF = 10
 KEY_BACKSPACE_ALT = 127
 KEY_BACKSPACE_CTRL = 8
+KEY_BACKSPACE_ALL = (KEY_BACKSPACE_ALT, KEY_BACKSPACE_CTRL)
 KEY_PAGE_DOWN_TERMINFO = 338
 KEY_PAGE_UP_TERMINFO = 339
 
@@ -155,7 +157,6 @@ class StyledSegment:
 
 def _log_curses_error(tag: str, line: int, col: int):
     if _DEBUG:
-        import sys
         print(f"curses.error at ({line}, {col}) in {tag}", file=sys.stderr)
 
 
@@ -211,9 +212,9 @@ def ascii_sanitize(text: str) -> str:
     text = text.replace("\u2592", "::")
     text = text.replace("\u2593", "##")
     text = unicodedata.normalize("NFKC", text)
-    # Keep only ASCII characters and whitespace (mapped to space).
+    # Keep all printable Unicode characters; map non-printable whitespace to space.
     return ''.join(
-        c if ord(c) < 128 else (' ' if c.isspace() else '')
+        c if c.isprintable() else (' ' if c.isspace() else '')
         for c in text
     )
 
@@ -253,24 +254,80 @@ def parse_inline_style(style_attr: str) -> dict:
 
 
 @functools.lru_cache(maxsize=256)
+def _parse_color_to_rgb(color_str: str) -> Optional[Tuple[int, int, int]]:
+    """Parse a CSS color string to an (r, g, b) tuple.
+
+    Supports named colors, rgb(r,g,b), and hex (#rrggbb, #rgb, rrggbb).
+    Returns None if the color cannot be parsed.
+    """
+    color_str = color_str.strip().lower()
+
+    if color_str in _NAMED_COLORS:
+        return _NAMED_COLORS[color_str]
+
+    if rgb_match := re.search(r'rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)', color_str):
+        return (int(rgb_match.group(1)), int(rgb_match.group(2)), int(rgb_match.group(3)))
+
+    color_str = color_str.lstrip('#')
+    if len(color_str) == 3:
+        color_str = ''.join(c * 2 for c in color_str)
+    if len(color_str) == 6:
+        try:
+            return (int(color_str[0:2], 16), int(color_str[2:4], 16), int(color_str[4:6], 16))
+        except ValueError:
+            return None
+    return None
+
+
+@functools.lru_cache(maxsize=256)
+def _rgb_to_256_color(r: int, g: int, b: int) -> int:
+    """Convert RGB to the nearest 256-color cube index (16-231).
+
+    Maps each channel to the 6-level cube (0, 95, 135, 175, 215, 255).
+    Returns a curses color index in the range 16-231.
+    """
+    def channel_to_index(v: int) -> int:
+        if v < 48:
+            return 0
+        idx = round((v - 48) / 40)
+        return max(0, min(5, idx))
+
+    return 16 + 36 * channel_to_index(r) + 6 * channel_to_index(g) + channel_to_index(b)
+
+
+@functools.lru_cache(maxsize=256)
 def hex_to_16_color(hex_color: str) -> Optional[int]:
     """Convert a hex color to the nearest 16-color ANSI palette.
-    
+
     Maps hex colors (e.g., '#ff0000', 'rgb(255,0,0)'), named colors (e.g., 'red'),
     to curses.COLOR_* constants.
-    
+
     Args:
         hex_color: Color in hex format (#rrggbb, #rgb, rrggbb), rgb(r,g,b),
                    or a CSS named color (e.g., 'red', 'blue', 'purple').
-    
+
     Returns:
         ANSI color index (0-15) for the closest matching color, or None if
         the color cannot be parsed.
-    
+
     Note:
         Uses Euclidean distance in RGB space to find the closest color.
         The 16-color palette includes standard colors plus bright variants.
     """
+    rgb = _parse_color_to_rgb(hex_color)
+    if rgb is None:
+        return None
+    r, g, b = rgb
+
+    # Find closest color by Euclidean distance
+    min_dist = float('inf')
+    closest_idx = 0
+
+    for idx, (ar, ag, ab) in enumerate(_ANSI_COLORS):
+        dist = (r - ar) ** 2 + (g - ag) ** 2 + (b - ab) ** 2
+        if dist < min_dist:
+            min_dist = dist
+            closest_idx = idx
     hex_color = hex_color.strip().lower()
 
     # Check if it's a named color
@@ -970,7 +1027,7 @@ def load_ecdict_index():
 
 def load_word_set():
     """Load word list into a set for O(1) lookups. Cached after first load."""
-    global _word_set
+    global _word_set, _word_list
     if _word_set is not None:
         return _word_set
 
@@ -979,14 +1036,17 @@ def load_word_set():
         target = _try_install_bundle("words.txt")
 
     if not target:
-        _word_set = set()  # Sentinel: file doesn't exist, don't retry
+        _word_set = set()
+        _word_list = []
         return _word_set
 
     try:
         with open(target, 'r') as f:
             _word_set = {line.strip().lower() for line in f if line.strip()}
+        _word_list = sorted(_word_set)
     except Exception:
         _word_set = set()
+        _word_list = []
 
     return _word_set
 
@@ -1028,7 +1088,7 @@ def lookup_word(word: str) -> str:
     max_candidates = 5000  # Cap examined length-compatible words
     examined_candidates = 0
 
-    for line_word in word_set:
+    for line_word in _word_list or []:
         len_diff = abs(len(line_word) - target_len)
         if len_diff > 1:
             continue
@@ -1160,7 +1220,7 @@ class FilePicker:
                             self.jump_to_letter(waiting_letter_buffer)
                         waiting_for_letter = False
                         waiting_letter_buffer = ""
-                    elif ch in (KEY_BACKSPACE_ALT, curses.KEY_BACKSPACE, KEY_BACKSPACE_CTRL):  # Backspace - clear buffer
+                    elif ch in (*KEY_BACKSPACE_ALL, curses.KEY_BACKSPACE):  # Backspace - clear buffer
                         waiting_letter_buffer = ""
                         self.status = "Jump: "
                     elif 32 <= ch <= 126:  # Printable character
@@ -1181,7 +1241,7 @@ class FilePicker:
                         self.in_search_mode = False
                         search_input = ""
                         self.status = f"Filter: {self.filter_text}" if self.filter_text else ""
-                    elif ch in (KEY_BACKSPACE_ALT, curses.KEY_BACKSPACE, KEY_BACKSPACE_CTRL):  # Backspace
+                    elif ch in (*KEY_BACKSPACE_ALL, curses.KEY_BACKSPACE):  # Backspace
                         search_input = search_input[:-1]
                         self.filter_text = search_input
                         self.apply_filter()
@@ -1247,7 +1307,7 @@ class FilePicker:
         h, _ = self.stdscr.getmaxyx()
         return max(1, h - 3)
 
-    def draw(self):
+    def draw(self) -> None:
         self.stdscr.erase()
         h, w = self.stdscr.getmaxyx()
         
@@ -1334,7 +1394,7 @@ class ReaderUI:
         self.load_book(book, use_saved_position=True)
 
     @staticmethod
-    def _true_terminal_size():
+    def _true_terminal_size() -> Optional[Tuple[int, int]]:
         """Real window size as (rows, cols) straight from the kernel."""
         for stream in (sys.stdout, sys.stdin, sys.stderr):
             try:
@@ -1350,7 +1410,7 @@ class ReaderUI:
         except OSError:
             return None
 
-    def _handle_resize(self):
+    def _handle_resize(self) -> None:
         """Update curses geometry for new terminal size, clear caches."""
         size = self._true_terminal_size()
         if size and self.stdscr.getmaxyx() != size:
@@ -1366,7 +1426,7 @@ class ReaderUI:
         self.total_pages = self._compute_total_pages()
         self._pending_resize = False
 
-    def load_book(self, book: EpubBook, use_saved_position: bool = True):
+    def load_book(self, book: EpubBook, use_saved_position: bool = True) -> None:
         self.book = book
         if use_saved_position:
             state = self.store.get_state(book.path)
@@ -1388,7 +1448,7 @@ class ReaderUI:
         """Get rendered page count for a chapter from the styled-page cache."""
         return max(1, len(self._get_styled_pages(chapter_index)))
 
-    def setup_colors(self):
+    def setup_colors(self) -> None:
         if self.has_colors:
             # Colors already initialized; just re-apply theme and clear cache
             self.apply_theme()
@@ -1415,7 +1475,7 @@ class ReaderUI:
         self.apply_theme()
         self.pages_attrs_cache.clear()
 
-    def apply_theme(self):
+    def apply_theme(self) -> None:
         if not self.has_colors:
             self.header_attr = curses.A_REVERSE
             self.footer_attr = curses.A_REVERSE
@@ -1460,32 +1520,49 @@ class ReaderUI:
 
         # Color rendering: dynamic color pair allocation
         if 'color' in css_styles and self.has_colors:
-            color_idx = hex_to_16_color(css_styles['color'])
-            if color_idx is not None:
-                # Use theme's background color (black for dark mode, white for light mode)
-                bg_color = curses.COLOR_WHITE if self.theme == "light" else curses.COLOR_BLACK
-                
-                # Allocate a new color pair if we haven't seen this color before
-                if color_idx not in self.color_pair_cache:
-                    try:
-                        curses.init_pair(self.next_color_pair, color_idx, bg_color)
-                        self.color_pair_cache[color_idx] = self.next_color_pair
-                        self.next_color_pair += 1
-                        # Safety: limit to 256 pairs (most terminals support this)
-                        if self.next_color_pair > 255:
-                             self.next_color_pair = FIRST_DYNAMIC_COLOR_PAIR
-                    except curses.error:
-                        # Terminal doesn't support this many color pairs, skip coloring
-                        pass
+            rgb = _parse_color_to_rgb(css_styles['color'])
+            if rgb is None:
+                return attr
 
-                # Apply the color pair to the attribute
-                pair_num = self.color_pair_cache.get(color_idx)
-                if pair_num is not None:
-                    attr |= curses.color_pair(pair_num)
+            # Use theme's background color (black for dark mode, white for light mode)
+            bg_color = curses.COLOR_WHITE if self.theme == "light" else curses.COLOR_BLACK
+
+            # Use 256-color cube index when possible for accurate rendering,
+            # falling back to nearest 16-color ANSI index otherwise.
+            fg_color = _rgb_to_256_color(*rgb)
+
+            # Allocate a new color pair if we haven't seen this color before
+            cache_key = fg_color
+            if cache_key not in self.color_pair_cache:
+                try:
+                    curses.init_pair(self.next_color_pair, fg_color, bg_color)
+                    self.color_pair_cache[cache_key] = self.next_color_pair
+                    self.next_color_pair += 1
+                except curses.error:
+                    # Terminal may not support 256-color indices. Fall back to
+                    # 16-color palette for this entry, then try again.
+                    fg_16 = hex_to_16_color(css_styles['color'])
+                    if fg_16 is not None:
+                        try:
+                            curses.init_pair(self.next_color_pair, fg_16, bg_color)
+                            self.color_pair_cache[cache_key] = self.next_color_pair
+                            self.next_color_pair += 1
+                        except curses.error:
+                            pass
+                    if self.next_color_pair > 255:
+                        # Wrap around: re-initialize all dynamic pairs with the
+                        # current background colour so nothing renders stale.
+                        self.color_pair_cache.clear()
+                        self.next_color_pair = FIRST_DYNAMIC_COLOR_PAIR
+
+            # Apply the color pair to the attribute
+            pair_num = self.color_pair_cache.get(cache_key)
+            if pair_num is not None:
+                attr |= curses.color_pair(pair_num)
 
         return attr
 
-    def toggle_theme(self):
+    def toggle_theme(self) -> None:
         self.theme = "light" if self.theme == "dark" else "dark"
         # Clear color cache so colors are re-rendered with correct background
         self.color_pair_cache.clear()
@@ -1496,14 +1573,14 @@ class ReaderUI:
         self.apply_theme()
         self.show_info_popup("Theme", f"Theme: {self.theme}")
 
-    def toggle_header(self):
+    def toggle_header(self) -> None:
         self.show_header = not self.show_header
         self.store.set_show_header(self.show_header)
         self.total_pages = self._compute_total_pages()  # Recompute when header changes
         self.store.save()
         self.show_info_popup("Header", f"Header: {'on' if self.show_header else 'off'}")
 
-    def toggle_heading_style(self):
+    def toggle_heading_style(self) -> None:
         """Toggle between yellow-bold and reverse for headings."""
         yellow_bold = curses.color_pair(COLOR_PAIR_TITLE) | curses.A_BOLD if self.has_colors else curses.A_BOLD
         reverse = curses.A_REVERSE
@@ -1516,7 +1593,7 @@ class ReaderUI:
         self.pages_attrs_cache.clear()
         self.show_info_popup("Heading", f"Heading style: {style}")
 
-    def toggle_justify(self):
+    def toggle_justify(self) -> None:
         """Toggle justified text mode."""
         self.justify_text = not self.justify_text
         self.store.set_justify_text(self.justify_text)
@@ -1525,7 +1602,7 @@ class ReaderUI:
         mode = "justified" if self.justify_text else "left-aligned"
         self.show_info_popup("Text", f"Text alignment: {mode}")
 
-    def dictionary_lookup(self):
+    def dictionary_lookup(self) -> None:
         """Enter word selection mode for dictionary lookup.
         
         First press 'd': Enter selection mode, highlight first word
@@ -1568,7 +1645,7 @@ class ReaderUI:
             # First 'd' - enter selection mode
             self._enter_selection_mode()
 
-    def _enter_selection_mode(self):
+    def _enter_selection_mode(self) -> None:
         """Enter word selection mode and highlight first word on page."""
         self.in_selection_mode = True
         # Extract word positions from current page
@@ -1586,7 +1663,7 @@ class ReaderUI:
             self.in_selection_mode = False
             self.show_info_popup("Dictionary", "No words on this page")
 
-    def dictionary_prompt(self):
+    def dictionary_prompt(self) -> None:
         """Prompt for a word and show dictionary info (direct lookup without selection)."""
         # Get word from user prompt
         self.stdscr.keypad(False)
@@ -1614,7 +1691,7 @@ class ReaderUI:
                     break
                 elif ch in (KEY_ENTER, KEY_LF):  # Enter
                     break
-                elif ch in (KEY_BACKSPACE_ALT, KEY_BACKSPACE_CTRL):  # Backspace
+                elif ch in (*KEY_BACKSPACE_ALL, curses.KEY_BACKSPACE):  # Backspace
                     if word:
                         word = word[:-1]
                         h, w = self.stdscr.getmaxyx()
@@ -1652,7 +1729,7 @@ class ReaderUI:
         # Show result in a popup
         self.show_info_popup("Dictionary", result)
 
-    def _extract_word_positions(self):
+    def _extract_word_positions(self) -> None:
         """Extract word positions (line_num, start_char, end_char) from current page.
         
         Stores tuples of (line_number, char_start, char_end) for each word.
@@ -1693,7 +1770,7 @@ class ReaderUI:
             if word_start is not None:
                 self.all_word_positions.append((line_num, word_start, len(line_text)))
 
-    def _navigate_selection(self, direction: str):
+    def _navigate_selection(self, direction: str) -> None:
         """Navigate word selection with arrow keys.
         
         Left/Right: Move to previous/next word
@@ -1766,7 +1843,7 @@ class ReaderUI:
         
         return (current_page, self.total_pages)
 
-    def show_info_popup(self, title: str, message: str, is_error: bool = False):
+    def show_info_popup(self, title: str, message: str, is_error: bool = False) -> None:
         """Show a blocking, scrollable information or error popup."""
         if not self.has_colors:
             self.setup_colors()
@@ -1869,11 +1946,9 @@ class ReaderUI:
             self.stdscr.nodelay(True)
             self.status_message = ""
 
-    def show_help(self):
-        """Display a help dialog - split into small pages that fit small screens."""
-        help_page1 = """Page 1/3
-
-READER:
+    def show_help(self) -> None:
+        """Display a help dialog as a single scrollable popup."""
+        help_text = """READER:
   Left/Right  Prev/Next page
   Up/Down     Prev/Next chapter
   t           Table of Contents
@@ -1881,10 +1956,6 @@ READER:
   b           Bookmark
   o           Open file
   q           Quit
-
-Press any key..."""
-        
-        help_page2 = """Page 2/3
 
 MODES:
   m           Toggle theme
@@ -1894,10 +1965,6 @@ MODES:
   ?           Dict (type)
   h           Help
 
-Press any key..."""
-        
-        help_page3 = """Page 3/3
-
 TIPS:
   --bookmark  Resume position
   --no-css    Faster rendering
@@ -1905,16 +1972,10 @@ TIPS:
 SELECTION (d):
   Arrows      Move
   Enter       Lookup
-  Esc         Cancel
-
-Press any key..."""
-        
-        # Show each page
-        self.show_info_popup("Help", help_page1)
-        self.show_info_popup("Help", help_page2)
-        self.show_info_popup("Help", help_page3)
+  Esc         Cancel"""
+        self.show_info_popup("Help", help_text)
     
-    def run(self):
+    def run(self) -> None:
         curses.curs_set(0)
         self.stdscr.keypad(True)
         self.stdscr.nodelay(True)
@@ -1955,11 +2016,11 @@ Press any key..."""
             needs_draw = True
         self._save_position()
 
-    def _save_position(self):
+    def _save_position(self) -> None:
         self.store.set_state(self.book.path, BookState(self.chapter_index, self.page_index))
         self.store.save()
 
-    def _ensure_page_in_range(self):
+    def _ensure_page_in_range(self) -> None:
         pages = self._get_styled_pages(self.chapter_index)
         if not pages:
             self.page_index = 0
@@ -2149,9 +2210,17 @@ Press any key..."""
             # Normalize text for comparison (strip whitespace)
             text_normalized = text.strip()
 
-            # Skip duplicates of last non-blank segment (handles cases like:
-            # "CHAPTER ONE" -> blank lines -> "CHAPTER ONE" again).
-            if text_normalized and text_normalized == last_nonblank_text and base_attr == last_nonblank_attr:
+            # Skip duplicates of last non-blank segment only when separated by
+            # blank lines and short enough to plausibly be a heading or title
+            # (e.g., "CHAPTER ONE" -> blank lines -> "CHAPTER ONE" again).
+            # This avoids dropping legitimate repeated body text such as poetic
+            # repetition or repeated incipits.
+            _MAX_HEADING_LENGTH = 40
+            if (text_normalized
+                    and text_normalized == last_nonblank_text
+                    and base_attr == last_nonblank_attr
+                    and last_blank_count > 0
+                    and len(text_normalized) <= _MAX_HEADING_LENGTH):
                 continue
 
             # Update last non-blank tracker
@@ -2224,20 +2293,6 @@ Press any key..."""
         self.pages_attrs_cache[cache_key] = pages
         return pages
 
-    def _get_plain_pages(self, chapter_index: int) -> List[List[str]]:
-        """Get pages as plain text (without styling attributes).
-        
-        Used by navigation methods that only need page count, not rendering.
-        Converts fragment-based lines back to plain strings by joining fragments.
-        """
-        styled_pages = self._get_styled_pages(chapter_index)
-        # Join all fragments in each line to get plain text
-        plain_pages = []
-        for page in styled_pages:
-            plain_page = [''.join(fragment_text for fragment_text, _ in line) for line in page]
-            plain_pages.append(plain_page)
-        return plain_pages
-
     def _calculate_selection_display(self) -> Tuple[int, int, int]:
         """Calculate display position (line_num, start_col, end_col) for selected word.
         
@@ -2248,7 +2303,7 @@ Press any key..."""
         body_start = 1 if self.show_header else 0
         return (self.selected_line + body_start, self.selected_word_start, self.selected_word_end)
 
-    def draw(self):
+    def draw(self) -> None:
         self.stdscr.erase()
         if self.has_colors:
             self.stdscr.bkgd(" ", curses.color_pair(COLOR_PAIR_INVERSE) if self.theme == "light" else curses.color_pair(COLOR_PAIR_DEFAULT))
@@ -2375,7 +2430,7 @@ Press any key..."""
             curses.curs_set(0)
             self.stdscr.nodelay(True)
 
-    def handle_key(self, ch: int):
+    def handle_key(self, ch: int) -> None:
         # Handle selection mode first
         if self.in_selection_mode:
             if ch in (KEY_ENTER, KEY_LF, curses.KEY_ENTER):  # Enter key
@@ -2433,7 +2488,7 @@ Press any key..."""
             self.dictionary_prompt()
 
 
-    def next_page(self):
+    def next_page(self) -> None:
         pages = self._get_styled_pages(self.chapter_index)
         if self.page_index + 1 < len(pages):
             self.page_index += 1
@@ -2443,7 +2498,7 @@ Press any key..."""
         else:
             self.show_info_popup("Info", "End of book")
 
-    def prev_page(self):
+    def prev_page(self) -> None:
         if self.page_index > 0:
             self.page_index -= 1
         elif self.chapter_index > 0:
@@ -2453,21 +2508,21 @@ Press any key..."""
         else:
             self.show_info_popup("Info", "Start of book")
 
-    def next_chapter(self):
+    def next_chapter(self) -> None:
         if self.chapter_index + 1 < len(self.book.chapters):
             self.chapter_index += 1
             self.page_index = 0
         else:
             self.show_info_popup("Info", "Last chapter")
 
-    def prev_chapter(self):
+    def prev_chapter(self) -> None:
         if self.chapter_index > 0:
             self.chapter_index -= 1
             self.page_index = 0
         else:
             self.show_info_popup("Info", "First chapter")
 
-    def open_toc(self):
+    def open_toc(self) -> None:
         entries = self.book.toc
         if not entries:
             self.show_info_popup("Table of Contents", "No table of contents available")
@@ -2503,7 +2558,7 @@ Press any key..."""
         finally:
             self.stdscr.nodelay(True)
 
-    def _draw_toc(self, entries: List[TocEntry], selected: int):
+    def _draw_toc(self, entries: List[TocEntry], selected: int) -> None:
         self.stdscr.erase()
         if self.has_colors:
             self.stdscr.bkgd(" ", curses.color_pair(COLOR_PAIR_INVERSE) if self.theme == "light" else curses.color_pair(COLOR_PAIR_DEFAULT))
@@ -2543,7 +2598,7 @@ Press any key..."""
         
         self.stdscr.refresh()
 
-    def search_prompt(self):
+    def search_prompt(self) -> None:
         query = self.prompt("Search: ").strip()
         if not query:
             self.show_info_popup("Search", "Search cancelled")
@@ -2586,13 +2641,13 @@ Press any key..."""
                 return True
         return False
 
-    def set_bookmark(self):
+    def set_bookmark(self) -> None:
         self.store.set_bookmark(self.book.path, self.chapter_index, self.page_index)
         self.store.set_state(self.book.path, BookState(self.chapter_index, self.page_index))
         self.store.save()
         self.show_info_popup("Bookmark", "Bookmark saved")
 
-    def open_file_picker(self):
+    def open_file_picker(self) -> None:
         start_dir = os.path.dirname(self.book.path) if self.book.path else os.getcwd()
         picker = FilePicker(self.stdscr, start_dir)
         selected = picker.run()

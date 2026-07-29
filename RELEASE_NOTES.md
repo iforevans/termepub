@@ -1,5 +1,24 @@
 # Release Notes
 
+## termepub-reader v1.0.4 — 2026-07-29
+
+Post-1.0 code hardening: UTF-8 rendering, 256-color support, deterministic dictionary suggestions, and miscellaneous correctness fixes.
+
+### Changes
+
+- `ascii_sanitize` now preserves all printable Unicode characters (accented Latin, CJK, etc.) instead of stripping everything above ASCII
+- Color rendering uses the 256-color cube (`_rgb_to_256_color`) on capable terminals, falling back to the 16-color ANSI palette on error
+- `_parse_color_to_rgb` extracted as a shared color-parsing helper, reused by both 16-color and 256-color paths
+- Dictionary "did you mean" suggestions are now deterministic — `_word_list` is sorted on load
+- Duplicate-segment detection in `_wrap_segments_with_styles` requires blank-line separation and text ≤ 40 chars, preventing loss of legitimate repeated body text
+- Color pair wraparound at 256 pairs now clears the cache before reuse, avoiding stale pair-to-color mappings
+- `_get_plain_pages` removed — dead code after the v1.0.1 styled-pages optimization
+- `show_help` collapsed from three sequential popups into a single scrollable popup
+- Added `-> None` return type hints to 30+ `ReaderUI` and `FilePicker` methods
+- Backspace handling consolidated to `KEY_BACKSPACE_ALL` tuple
+- Removed redundant `import sys` inside `_log_curses_error`
+- Test count increased from 22 to 30, covering Unicode preservation, 256-color mapping, color parsing, deterministic suggestions, and conservative dedup
+
 ## termepub-reader v1.0.3 — 2026-07-28
 
 Follow-up to v1.0.2 with minor code quality improvements from review.

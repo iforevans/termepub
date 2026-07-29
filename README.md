@@ -2,7 +2,7 @@
 
 A terminal-based (NCurses) ePUB reader with a clean, keyboard-driven interface. Built for offline reading in terminal environments.
 
-**Version:** 1.0.3 (2026-07-28)
+**Version:** 1.0.4 (2026-07-29)
 
 ## Features
 
@@ -112,6 +112,20 @@ Ifor Evans - [@iforevans](https://github.com/iforevans)
 ---
 
 ## Recent Changes
+
+### v1.0.4 (2026-07-29) - Post-1.0 Hardening
+
+- `ascii_sanitize` preserves all printable Unicode (accented Latin, CJK, etc.) instead of ASCII-only
+- Color rendering uses 256-color cube on capable terminals, with 16-color fallback
+- Dictionary "did you mean" suggestions are now deterministic
+- Duplicate-segment detection no longer drops legitimate repeated body text
+- Color pair wraparound at 256 pairs now clears cache before reuse
+- `_get_plain_pages` removed (dead code)
+- `show_help` collapsed from three sequential popups to one scrollable popup
+- Added `-> None` return type hints to 30+ ReaderUI and FilePicker methods
+- Backspace handling consolidated to `KEY_BACKSPACE_ALL` tuple
+- Removed redundant `import sys` inside `_log_curses_error`
+- Tests increased from 22 to 30
 
 ### v1.0.3 (2026-07-28) - Code Quality
 

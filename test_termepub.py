@@ -112,9 +112,13 @@ def test_search_matches_phrase_across_rendered_line_break():
 def test_search_matches_phrase_across_rendered_page_break():
     ui = make_ui(" ".join(f"word{index}" for index in range(100)), height=6, width=21)
     ui.show_info_popup = lambda *_args, **_kwargs: None
-    pages = ui._get_plain_pages(0)
+    pages = ui._get_styled_pages(0)
     assert len(pages) > 1
-    query = f"{pages[0][-1].split()[-1]} {pages[1][0].split()[0]}"
+    # Join all fragments of the last line of page 0 to get its full text,
+    # then take the last word. Same for first line of page 1.
+    last_line_text = ''.join(t for t, _ in pages[0][-1])
+    first_line_text = ''.join(t for t, _ in pages[1][0])
+    query = f"{last_line_text.split()[-1]} {first_line_text.split()[0]}"
     assert ui.search(query) is True
     assert ui.page_index == 0
 
@@ -360,6 +364,101 @@ def test_epub_archive_member_count_limit_is_enforced(monkeypatch, tmp_path):
     monkeypatch.setattr(termepub, "MAX_EPUB_MEMBERS", 1)
     with pytest.raises(ValueError, match="too many files"):
         termepub.EpubBook(path)
+
+
+def test_rgb_to_256_color_maps_correctly():
+    # 256-color cube: 16 + 36*R + 6*G + B, each channel maps to 0-5
+    assert termepub._rgb_to_256_color(0, 0, 0) == 16      # black
+    assert termepub._rgb_to_256_color(255, 255, 255) == 231  # white
+    assert termepub._rgb_to_256_color(255, 0, 0) == 196     # red (16+36*5)
+    assert termepub._rgb_to_256_color(0, 255, 0) == 46      # green (16+6*5)
+    assert termepub._rgb_to_256_color(0, 0, 255) == 21      # blue (16+5)
+
+
+def test_parse_color_to_rgb_handles_formats():
+    assert termepub._parse_color_to_rgb("#ff0000") == (255, 0, 0)
+    assert termepub._parse_color_to_rgb("rgb(128, 64, 32)") == (128, 64, 32)
+    assert termepub._parse_color_to_rgb("red") == (255, 0, 0)
+    assert termepub._parse_color_to_rgb("#f00") == (255, 0, 0)
+    assert termepub._parse_color_to_rgb("notacolor") is None
+
+
+def test_ascii_sanitize_preserves_unicode():
+    assert "é" in termepub.ascii_sanitize("café")
+    assert "ñ" in termepub.ascii_sanitize("señor")
+    assert "ü" in termepub.ascii_sanitize("über")
+    assert "中" in termepub.ascii_sanitize("中文")
+
+
+def test_word_suggestions_are_deterministic(monkeypatch):
+    """Fuzzy suggestions iterate a sorted list, not a random-order set."""
+    monkeypatch.setattr(termepub, "load_ecdict_index", lambda: None)
+    monkeypatch.setattr(termepub, "_word_set", {"abc", "abd", "abcde", "abcd"})
+    monkeypatch.setattr(termepub, "_word_list", ["abc", "abcd", "abcde", "abd"])
+    result = termepub.lookup_word("abc")
+    assert "found" in result
+
+
+def test_word_suggestions_iterate_sorted_list(monkeypatch):
+    """When word is not found, suggestions come from _word_list in order."""
+    monkeypatch.setattr(termepub, "load_ecdict_index", lambda: None)
+    monkeypatch.setattr(termepub, "_word_set", {"zeta", "beta", "alpha"})
+    monkeypatch.setattr(termepub, "_word_list", ["alpha", "beta", "zeta"])
+    result = termepub.lookup_word("bet")
+    assert "Did you mean: beta" in result
+
+
+def test_dedup_only_skips_heading_like_duplicates():
+    """Duplicate detection only skips short text separated by blank lines."""
+    ui = make_ui(height=10, width=40)
+
+    # Short repeated heading separated by blanks should be deduplicated
+    ui.justify_text = False
+    ui.heading_attr = termepub.curses.A_REVERSE
+    segments = [
+        termepub.StyledSegment("CHAPTER ONE", {}, is_heading=True),
+        termepub.StyledSegment("\n\n", {}),
+        termepub.StyledSegment("CHAPTER ONE", {}, is_heading=True),
+        termepub.StyledSegment("some body text", {}),
+    ]
+    lines = ui._wrap_segments_with_styles(segments, 40)
+    plain = ["".join(t for t, _ in line) for line in lines]
+    chapter_count = sum(1 for l in plain if "CHAPTER ONE" in l)
+    assert chapter_count == 1, f"Expected 1 CHAPTER ONE, got {chapter_count}"
+
+
+def test_dedup_preserves_long_repeated_text():
+    """Long repeated body text is NOT deduplicated even with blanks between."""
+    ui = make_ui(height=10, width=40)
+    ui.justify_text = False
+    ui.heading_attr = termepub.curses.A_REVERSE
+
+    long_text = "This is a repeated paragraph that is longer than forty characters"
+    segments = [
+        termepub.StyledSegment(long_text, {}),
+        termepub.StyledSegment("\n\n", {}),
+        termepub.StyledSegment(long_text, {}),
+    ]
+    lines = ui._wrap_segments_with_styles(segments, 40)
+    plain = ["".join(t for t, _ in line) for line in lines]
+    matches = [l for l in plain if "This is a repeated" in l]
+    assert len(matches) >= 2, f"Expected both copies preserved, got {len(matches)}"
+
+
+def test_dedup_preserves_adjacent_repetition():
+    """Same text appearing without blank lines between is preserved."""
+    ui = make_ui(height=10, width=40)
+    ui.justify_text = False
+    ui.heading_attr = termepub.curses.A_REVERSE
+
+    segments = [
+        termepub.StyledSegment("hello", {}),
+        termepub.StyledSegment(" hello", {}),
+    ]
+    lines = ui._wrap_segments_with_styles(segments, 40)
+    plain = ["".join(t for t, _ in line) for line in lines]
+    hello_count = plain.count("hello hello")
+    assert hello_count == 1
 
 
 def test_epub_suspicious_compression_ratio_is_rejected(monkeypatch, tmp_path):
