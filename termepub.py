@@ -52,7 +52,7 @@ CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "termepub")
 STATE_FILE = os.path.join(CONFIG_DIR, "state.json")
 
 # Footer format string for status bar display (simplified - just position info)
-FOOTER_FORMAT = "Chapter {}/{} | Page {}/{} | {}% | h=help"
+FOOTER_FORMAT = "Chapter {}/{} | Page {}/{} | {}% | {} | h=help"
 FOOTER_FORMAT_SELECTION = (
     " SELECTION MODE - Arrow keys to navigate, Enter to lookup, Esc to cancel "
 )
@@ -2403,6 +2403,7 @@ SELECTION (d):
                 current_page,
                 total_pages,
                 progress_pct,
+                f"termepub {__version__}",
             )
         
         try:
