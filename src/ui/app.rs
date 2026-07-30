@@ -100,8 +100,8 @@ impl App {
 
     #[allow(dead_code)]
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
-        // Quit is available in every mode.
-        if key.code == KeyCode::Char('q') {
+        // Quit is available in every mode except input modes where 'q' is text.
+        if key.code == KeyCode::Char('q') && !matches!(self.mode, Mode::Dictionary | Mode::Search) {
             self.mode = Mode::Popup;
             self.popup_message = Some("Quit? (y/n)".into());
             return true;
@@ -409,7 +409,13 @@ impl App {
                 }
                 true
             }
-            KeyCode::Esc | KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
+            KeyCode::Esc => {
+                self.mode = Mode::Reader;
+                self.dictionary_word.clear();
+                self.dictionary_result = None;
+                true
+            }
+            KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
                 self.mode = Mode::Reader;
                 self.dictionary_word.clear();
                 self.dictionary_result = None;

@@ -348,49 +348,89 @@ fn draw_dictionary(frame: &mut Frame, app: &App) {
     let area = frame.area();
     let theme = app.theme;
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(3)].as_ref())
-        .split(area);
-
-    // Draw underlying reader
+    // Draw underlying reader first
     draw_reader(frame, app);
 
-    // Dictionary prompt
-    let prompt = format!("dict>{} ", app.dictionary_word);
-    let paragraph = Paragraph::new(Span::raw(prompt))
+    // Size to content
+    let result_content =
+        app.dictionary_result.as_deref().unwrap_or("Type a word and press Enter.");
+    let inner_w = ((area.width as f64 * 0.7).min(area.width as f64) as usize).saturating_sub(2);
+    // Estimate wrapped lines: each line of content may wrap
+    let mut wrapped_lines = 0usize;
+    for line in result_content.lines() {
+        wrapped_lines += line.len().div_ceil(inner_w.max(1)).max(1);
+    }
+    // popup = border(2) + content + prompt(1)
+    let needed_h = (wrapped_lines + 2 + 1) as u16; // +2 border, +1 prompt
+    let min_popup_h = 6u16;
+    let max_popup_h = (area.height as f64 * 0.7) as u16;
+    let popup_h = needed_h.max(min_popup_h).min(max_popup_h).min(area.height);
+
+    let popup_w = (area.width as f64 * 0.7).min(area.width as f64) as u16;
+    if popup_h < 5 || popup_w < 20 {
+        return;
+    }
+
+    let popup_area = centered_rect(area, popup_w, popup_h);
+
+    // Clear behind popup and draw background block
+    frame.render_widget(Clear, popup_area);
+    let bg = Block::default().style(Style::default().bg(theme.background()));
+    frame.render_widget(bg, popup_area);
+
+    // Draw outer border on the full popup area
+    let outer_block = Block::default()
+        .borders(Borders::ALL)
+        .title(Span::raw(" Dictionary "))
         .style(
             Style::default()
-                .fg(Color::Cyan)
-                .bg(theme.background())
+                .fg(theme.foreground())
                 .add_modifier(Modifier::BOLD),
-        )
-        .alignment(Alignment::Left);
-    frame.render_widget(paragraph, chunks[1]);
-
-    // Show result if available
-    if let Some(ref result) = app.dictionary_result {
-        let result_lines: Vec<Line> = result
-            .lines()
-            .map(|line| {
-                Line::from(Span::styled(
-                    format!("  {} ", line),
-                    Style::default().fg(Color::Cyan).bg(theme.background()),
-                ))
-            })
-            .collect();
-
-        let result_text = Text::from(result_lines);
-        let result_para = Paragraph::new(result_text);
-
-        let result_area = Rect::new(
-            area.x,
-            area.y + 3,
-            area.width,
-            area.height.saturating_sub(3),
         );
-        frame.render_widget(result_para, result_area);
-    }
+    frame.render_widget(outer_block, popup_area);
+
+    // Inner area (inside the border)
+    let inner_area = Rect::new(
+        popup_area.x + 1,
+        popup_area.y + 1,
+        popup_area.width.saturating_sub(2),
+        popup_area.height.saturating_sub(2),
+    );
+
+    // Split inner into result area + prompt bar
+    let inner = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)].as_ref())
+        .split(inner_area);
+
+    let result_lines_vec: Vec<Line> = result_content
+        .lines()
+        .map(|line| {
+            Line::from(Span::styled(
+                format!("{} ", line),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .bg(theme.background()),
+            ))
+        })
+        .collect();
+
+    let result_text = Text::from(result_lines_vec);
+    let result_para = Paragraph::new(result_text)
+        .wrap(Wrap { trim: true })
+        .style(Style::default().bg(theme.background()));
+    frame.render_widget(result_para, inner[0]);
+
+    // Prompt bar
+    let prompt = format!("dict>{}", app.dictionary_word);
+    let prompt_para = Paragraph::new(Span::styled(
+        prompt,
+        Style::default()
+            .fg(Color::Cyan)
+            .bg(theme.background())
+            .add_modifier(Modifier::BOLD),
+    ));
+    frame.render_widget(prompt_para, inner[1]);
 }
 
 fn draw_popup(frame: &mut Frame, app: &App) {

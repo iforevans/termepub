@@ -1,11 +1,16 @@
-//! Embedded dictionary with lazy loading and fuzzy suggestions.
+//! External dictionary with lazy loading and fuzzy suggestions.
 //!
-//! Loads `ecdict_index.json` from the binary on first lookup via
-//! `OnceLock`.  Performs exact lowercase lookup, then retries with
-//! punctuation stripped.  Falls back to deterministic fuzzy suggestions
-//! limited to 5,000 candidates.
+//! Loads `ecdict_index.json` from disk on first lookup via `OnceLock`.
+//! Search order:
+//! 1. `~/.config/termepub/ecdict_index.json`
+//! 2. Next to the binary (resolved from `argv[0]`)
+//!
+//! Performs exact lowercase lookup, then retries with punctuation stripped.
+//! Falls back to deterministic fuzzy suggestions limited to 5,000 candidates.
 
 use std::collections::BTreeMap;
+use std::env;
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
 /// Maximum fuzzy-matching candidates to examine.
@@ -21,10 +26,48 @@ struct Definition {
     definition: String,
 }
 
-/// Loads and parses the embedded ECDICT JSON.
+/// Resolves the path to the dictionary file.
+fn find_dictionary_path() -> Option<PathBuf> {
+    // 1. Config directory.
+    if let Some(config_dir) = dirs_config_path() {
+        let p = config_dir.join("ecdict_index.json");
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    // 2. Next to the binary.
+    if let Ok(argv0) = env::current_exe() {
+        if let Some(parent) = argv0.parent() {
+            let p = parent.join("ecdict_index.json");
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
+
+    None
+}
+
+fn dirs_config_path() -> Option<PathBuf> {
+    if let Some(config) = std::env::var_os("XDG_CONFIG_HOME") {
+        let mut p = PathBuf::from(config);
+        p.push("termepub");
+        return Some(p);
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let mut p = PathBuf::from(home);
+        p.push(".config");
+        p.push("termepub");
+        return Some(p);
+    }
+    None
+}
+
 fn load_dictionary() -> Option<BTreeMap<String, Definition>> {
-    let data = include_bytes!("../ecdict_index.json");
-    let parsed: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(data).ok()?;
+    let path = find_dictionary_path()?;
+    let data = std::fs::read(&path).ok()?;
+    let parsed: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(&data).ok()?;
 
     let mut map = BTreeMap::new();
     for (word, val) in parsed {
