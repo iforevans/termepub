@@ -12,6 +12,10 @@ env/
 ENV/
 .venv
 
+# Rust
+/target
+Cargo.lock
+
 # IDE
 .vscode/
 .idea/
@@ -27,7 +31,5 @@ Thumbs.db
 ~/.config/termepub/
 *.bak
 
-# Test files
-*.epub
-test_epub/
-*.html
+# Test artifacts (not fixture sources)
+*.bak

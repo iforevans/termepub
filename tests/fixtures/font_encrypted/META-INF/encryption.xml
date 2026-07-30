@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container" xmlns:enc="http://www.w3.org/2001/04/xmlenc#">
+  <EncryptedContent>
+    <EncryptionInfo>
+      <enc:EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#keyword"/>
+      <EncryptedCipherData>
+        <enc:CipherReference URI="fonts/custom.ttf"/>
+      </EncryptedCipherData>
+    </EncryptionInfo>
+  </EncryptedContent>
+</encryption>

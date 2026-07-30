@@ -1,0 +1,698 @@
+use std::path::PathBuf;
+
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+use crate::error::Error;
+use crate::state::StateStore;
+use crate::EpubBook;
+use crate::StyledSegment;
+
+use super::theme::Theme;
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Reader,
+    Toc,
+    Search,
+    Picker,
+    Popup,
+    Help,
+    Dictionary,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct PickerEntry {
+    pub name: String,
+    pub is_dir: bool,
+    pub is_epub: bool,
+}
+
+#[allow(dead_code)]
+pub struct App {
+    pub book: Option<EpubBook>,
+    pub book_path: Option<PathBuf>,
+    pub chapter_index: usize,
+    pub page_index: usize,
+    pub total_pages: usize,
+    pub pages: Vec<Vec<Vec<StyledSegment>>>,
+    pub mode: Mode,
+    pub show_header: bool,
+    pub justify: bool,
+    pub theme: Theme,
+    pub use_css: bool,
+    pub terminal_size: (u16, u16),
+    pub search_query: String,
+    pub search_result_page: Option<usize>,
+    pub popup_message: Option<String>,
+    pub toc_index: usize,
+    pub picker_dir: PathBuf,
+    pub picker_entries: Vec<PickerEntry>,
+    pub picker_filter: String,
+    pub picker_selected: usize,
+    pub dictionary_word: String,
+    pub dictionary_result: Option<String>,
+    pub state_store: Option<StateStore>,
+    pub dirty: bool,
+    pub should_quit: bool,
+}
+
+impl App {
+    #[allow(dead_code)]
+    pub fn new(use_css: bool, terminal_size: (u16, u16)) -> Self {
+        Self {
+            book: None,
+            book_path: None,
+            chapter_index: 0,
+            page_index: 0,
+            total_pages: 0,
+            pages: Vec::new(),
+            mode: Mode::Reader,
+            show_header: true,
+            justify: false,
+            theme: Theme::Dark,
+            use_css,
+            terminal_size,
+            search_query: String::new(),
+            search_result_page: None,
+            popup_message: None,
+            toc_index: 0,
+            picker_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            picker_entries: Vec::new(),
+            picker_filter: String::new(),
+            picker_selected: 0,
+            dictionary_word: String::new(),
+            dictionary_result: None,
+            state_store: None,
+            dirty: false,
+            should_quit: false,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn get_last_book_path(&self) -> Option<PathBuf> {
+        self.state_store
+            .as_ref()
+            .and_then(|s| s.get_last_book_path())
+            .map(PathBuf::from)
+    }
+
+    #[allow(dead_code)]
+    pub fn handle_key(&mut self, key: KeyEvent) -> bool {
+        // Quit is available in every mode.
+        if key.code == KeyCode::Char('q') {
+            self.mode = Mode::Popup;
+            self.popup_message = Some("Quit? (y/n)".into());
+            return true;
+        }
+
+        match self.mode {
+            Mode::Reader => self.handle_reader_key(key),
+            Mode::Search => self.handle_search_key(key),
+            Mode::Toc => self.handle_toc_key(key),
+            Mode::Picker => self.handle_picker_key(key),
+            Mode::Popup => self.handle_popup_key(key),
+            Mode::Help => self.handle_help_key(key),
+            Mode::Dictionary => self.handle_dictionary_key(key),
+        }
+    }
+
+    fn handle_reader_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
+                self.mode = Mode::Popup;
+                self.popup_message = Some("Quit? (y/n)".into());
+                true
+            }
+            KeyCode::Char('j') | KeyCode::Left => {
+                if self.page_index == 0 {
+                    self.prev_chapter();
+                } else {
+                    self.prev_page();
+                }
+                true
+            }
+            KeyCode::Char('k') | KeyCode::Right => {
+                if self.page_index + 1 >= self.total_pages {
+                    self.next_chapter();
+                } else {
+                    self.next_page();
+                }
+                true
+            }
+            KeyCode::Up => {
+                self.prev_chapter();
+                true
+            }
+            KeyCode::Down => {
+                self.next_chapter();
+                true
+            }
+            KeyCode::Char('f') if key.modifiers == KeyModifiers::CONTROL => {
+                self.next_page();
+                true
+            }
+            KeyCode::Char('b') if key.modifiers == KeyModifiers::CONTROL => {
+                self.prev_page();
+                true
+            }
+            KeyCode::PageDown => {
+                self.next_page();
+                true
+            }
+            KeyCode::PageUp => {
+                self.prev_page();
+                true
+            }
+            KeyCode::Char('f') => {
+                self.first_page();
+                true
+            }
+            KeyCode::Char('l') => {
+                self.last_page();
+                true
+            }
+            KeyCode::Char('t') => {
+                self.mode = Mode::Toc;
+                true
+            }
+            KeyCode::Char('/') => {
+                self.mode = Mode::Search;
+                true
+            }
+            KeyCode::Char('o') => {
+                self.mode = Mode::Picker;
+                self.refresh_picker();
+                true
+            }
+            KeyCode::Char('T') => {
+                self.cycle_theme();
+                self.dirty = true;
+                true
+            }
+            KeyCode::Char('h') => {
+                self.toggle_header();
+                self.dirty = true;
+                true
+            }
+            KeyCode::Char('J') => {
+                self.toggle_justify();
+                self.dirty = true;
+                true
+            }
+            KeyCode::Char('m') => {
+                self.set_bookmark();
+                true
+            }
+            KeyCode::Char('b') => {
+                self.go_to_bookmark();
+                true
+            }
+            KeyCode::Char('?') => {
+                self.mode = Mode::Help;
+                true
+            }
+            KeyCode::Char('d') => {
+                self.mode = Mode::Dictionary;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn handle_search_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Enter => {
+                if !self.search_query.is_empty() {
+                    if let Some(ref _book) = self.book {
+                        let result = crate::search_pages(&self.pages, &self.search_query);
+                        self.search_result_page = result;
+                        if let Some(page) = result {
+                            self.go_to_page(page);
+                        }
+                    }
+                }
+                self.mode = Mode::Reader;
+                self.search_query.clear();
+                true
+            }
+            KeyCode::Esc | KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
+                self.mode = Mode::Reader;
+                self.search_query.clear();
+                true
+            }
+            KeyCode::Char(c) => {
+                self.search_query.push(c);
+                true
+            }
+            KeyCode::Backspace => {
+                self.search_query.pop();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn handle_toc_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if let Some(ref book) = self.book {
+                    let len = book.toc().len();
+                    if len > 0 && self.toc_index < len - 1 {
+                        self.toc_index += 1;
+                    }
+                }
+                true
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if self.toc_index > 0 {
+                    self.toc_index -= 1;
+                }
+                true
+            }
+            KeyCode::Enter => {
+                if let Some(ref book) = self.book {
+                    let toc = book.toc();
+                    if self.toc_index < toc.len() {
+                        let entry = &toc[self.toc_index];
+                        self.navigate_chapter(entry.spine_index);
+                    }
+                }
+                self.mode = Mode::Reader;
+                true
+            }
+            KeyCode::Esc | KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
+                self.mode = Mode::Reader;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn handle_picker_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                let indices = self.filtered_picker_entries();
+                if !indices.is_empty() {
+                    let current = self.picker_selected;
+                    let next = (current + 1).min(indices.len() - 1);
+                    self.picker_selected = next;
+                }
+                true
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if self.picker_selected > 0 {
+                    self.picker_selected -= 1;
+                }
+                true
+            }
+            KeyCode::Enter => {
+                let indices = self.filtered_picker_entries();
+                if !indices.is_empty() && self.picker_selected < indices.len() {
+                    let idx = indices[self.picker_selected];
+                    let entry = &self.picker_entries[idx];
+                    if entry.name == ".." {
+                        self.picker_dir.pop();
+                        self.refresh_picker();
+                    } else if entry.is_dir {
+                        self.picker_dir.push(&entry.name);
+                        self.refresh_picker();
+                    } else if entry.is_epub {
+                        let path = self.picker_dir.join(&entry.name);
+                        if let Ok(absolute) = std::fs::canonicalize(&path) {
+                            if self.open_book(absolute).is_ok() {
+                                self.mode = Mode::Reader;
+                            }
+                        }
+                    }
+                }
+                true
+            }
+            KeyCode::Esc | KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
+                if self.book.is_some() {
+                    self.mode = Mode::Reader;
+                }
+                true
+            }
+            KeyCode::Char('s') | KeyCode::Char('/') => {
+                self.mode = Mode::Search;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn handle_popup_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Char('y') => {
+                if let Some(ref msg) = self.popup_message {
+                    if msg == "Quit? (y/n)" {
+                        self.should_quit = true;
+                        return true;
+                    }
+                }
+                false
+            }
+            KeyCode::Char('n') | KeyCode::Esc => {
+                if let Some(ref msg) = self.popup_message {
+                    if msg == "Quit? (y/n)" {
+                        self.popup_message = None;
+                        if self.book.is_some() {
+                            self.mode = Mode::Reader;
+                        } else {
+                            self.mode = Mode::Picker;
+                        }
+                        return true;
+                    }
+                }
+                self.popup_message = None;
+                if self.book.is_some() {
+                    self.mode = Mode::Reader;
+                } else {
+                    self.mode = Mode::Picker;
+                }
+                true
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                self.popup_message = None;
+                if self.book.is_some() {
+                    self.mode = Mode::Reader;
+                } else {
+                    self.mode = Mode::Picker;
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn handle_help_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Reader;
+                true
+            }
+            KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
+                self.mode = Mode::Reader;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn handle_dictionary_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Enter => {
+                if !self.dictionary_word.is_empty() {
+                    self.dictionary_result = Some(crate::lookup_word(&self.dictionary_word));
+                }
+                true
+            }
+            KeyCode::Esc | KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
+                self.mode = Mode::Reader;
+                self.dictionary_word.clear();
+                self.dictionary_result = None;
+                true
+            }
+            KeyCode::Char(c) => {
+                self.dictionary_word.push(c);
+                true
+            }
+            KeyCode::Backspace => {
+                self.dictionary_word.pop();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn go_to_page(&mut self, page: usize) {
+        if self.pages.is_empty() {
+            return;
+        }
+        self.page_index = page.min(self.pages.len() - 1);
+    }
+
+    #[allow(dead_code)]
+    pub fn next_page(&mut self) {
+        if self.page_index + 1 < self.pages.len() {
+            self.page_index += 1;
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn prev_page(&mut self) {
+        if self.page_index > 0 {
+            self.page_index -= 1;
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn first_page(&mut self) {
+        self.page_index = 0;
+    }
+
+    #[allow(dead_code)]
+    pub fn next_chapter(&mut self) {
+        if let Some(ref book) = self.book {
+            let max_ch = book.chapter_count().saturating_sub(1);
+            if self.chapter_index < max_ch {
+                self.navigate_chapter(self.chapter_index + 1);
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn prev_chapter(&mut self) {
+        if self.chapter_index > 0 {
+            self.navigate_chapter(self.chapter_index - 1);
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn last_page(&mut self) {
+        if !self.pages.is_empty() {
+            self.page_index = self.pages.len() - 1;
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn navigate_chapter(&mut self, chapter_idx: usize) {
+        self.chapter_index = chapter_idx;
+        self.page_index = 0;
+        self.paginate();
+    }
+
+    #[allow(dead_code)]
+    pub fn paginate(&mut self) {
+        if let Some(ref book) = self.book {
+            let chapters = book.chapters();
+            if self.chapter_index < chapters.len() {
+                let segments = &chapters[self.chapter_index];
+                let (cols, rows) = self.terminal_size;
+                self.pages = crate::paginate(
+                    segments,
+                    cols as usize,
+                    rows as usize,
+                    self.show_header,
+                    self.justify,
+                );
+                self.total_pages = self.pages.len();
+                if self.page_index >= self.total_pages {
+                    self.page_index = self.total_pages.saturating_sub(1);
+                }
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn open_book(&mut self, path: PathBuf) -> Result<(), Error> {
+        let book = EpubBook::open(&path)?;
+
+        let book_hash = StateStore::book_key(&path.to_string_lossy());
+        let (saved_chapter, saved_page) = if let Some(ref store) = self.state_store {
+            let state = store.get_state_for_book(&book_hash);
+            (state.chapter_index, state.page_index)
+        } else {
+            (0, 0)
+        };
+
+        self.book = Some(book);
+        self.book_path = Some(path);
+        self.chapter_index = 0;
+        self.page_index = 0;
+
+        // Restore saved position after paginating
+        self.paginate();
+
+        if saved_chapter > 0 || saved_page > 0 {
+            // Clamp saved position to available chapters/pages
+            if let Some(ref book) = self.book {
+                let max_chapter = book.chapter_count().saturating_sub(1);
+                let clamped_chapter = saved_chapter.min(max_chapter);
+                if clamped_chapter != self.chapter_index {
+                    self.navigate_chapter(clamped_chapter);
+                }
+                self.page_index = saved_page.min(self.pages.len().saturating_sub(1));
+            }
+        }
+
+        // Save last book path
+        if let Some(ref mut store) = self.state_store {
+            if let Some(ref p) = self.book_path {
+                store.set_global_str("last_book_path", &p.to_string_lossy());
+            }
+        }
+
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn resize(&mut self, cols: u16, rows: u16) {
+        self.terminal_size = (cols, rows);
+        self.paginate();
+    }
+
+    #[allow(dead_code)]
+    pub fn set_bookmark(&mut self) {
+        if let Some(ref mut store) = self.state_store {
+            if let Some(ref path) = self.book_path {
+                let key = StateStore::book_key(&path.to_string_lossy());
+                let _ = store.set_bookmark(&key, self.chapter_index, self.page_index);
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn go_to_bookmark(&mut self) {
+        if let Some(ref store) = self.state_store {
+            if let Some(ref path) = self.book_path {
+                let key = StateStore::book_key(&path.to_string_lossy());
+                if let Some(bm) = store.get_bookmark(&key) {
+                    if bm.chapter_index != self.chapter_index {
+                        self.navigate_chapter(bm.chapter_index);
+                    }
+                    self.page_index = bm.page_index.min(self.pages.len().saturating_sub(1));
+                }
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn cycle_theme(&mut self) {
+        self.theme = self.theme.next_theme();
+    }
+
+    #[allow(dead_code)]
+    pub fn toggle_header(&mut self) {
+        self.show_header = !self.show_header;
+        self.paginate();
+    }
+
+    #[allow(dead_code)]
+    pub fn toggle_justify(&mut self) {
+        self.justify = !self.justify;
+        self.paginate();
+    }
+
+    #[allow(dead_code)]
+    pub fn save_state(&mut self) {
+        if let Some(ref mut store) = self.state_store {
+            if let Some(ref path) = self.book_path {
+                let key = StateStore::book_key(&path.to_string_lossy());
+                store.set_state_for_book(&key, self.chapter_index, self.page_index);
+
+                // Save theme and settings
+                store.set_global_str("theme", self.theme.name());
+                store.set_global_bool("show_header", self.show_header);
+
+                let _ = store.save();
+            }
+        }
+        self.dirty = false;
+    }
+
+    #[allow(dead_code)]
+    pub fn refresh_picker(&mut self) {
+        self.picker_entries.clear();
+        self.picker_selected = 0;
+
+        // Add parent directory entry
+        if self.picker_dir.ancestors().count() > 1 {
+            self.picker_entries.push(PickerEntry {
+                name: "..".to_string(),
+                is_dir: true,
+                is_epub: false,
+            });
+        }
+
+        if let Ok(entries) = std::fs::read_dir(&self.picker_dir) {
+            let mut dirs: Vec<PathBuf> = Vec::new();
+            let mut epubs: Vec<PathBuf> = Vec::new();
+
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                let is_dir = path.is_dir();
+                let is_epub = path
+                    .extension()
+                    .map(|ext| ext.eq_ignore_ascii_case("epub"))
+                    .unwrap_or(false);
+
+                if is_dir {
+                    dirs.push(path);
+                } else if is_epub {
+                    epubs.push(path);
+                }
+            }
+
+            dirs.sort_by(|a, b| {
+                a.file_name()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase()
+                    .cmp(&b.file_name().unwrap_or_default().to_ascii_lowercase())
+            });
+            epubs.sort_by(|a, b| {
+                a.file_name()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase()
+                    .cmp(&b.file_name().unwrap_or_default().to_ascii_lowercase())
+            });
+
+            for d in dirs {
+                if let Some(name) = d.file_name().and_then(|n| n.to_str()) {
+                    self.picker_entries.push(PickerEntry {
+                        name: name.to_string(),
+                        is_dir: true,
+                        is_epub: false,
+                    });
+                }
+            }
+
+            for e in epubs {
+                if let Some(name) = e.file_name().and_then(|n| n.to_str()) {
+                    self.picker_entries.push(PickerEntry {
+                        name: name.to_string(),
+                        is_dir: false,
+                        is_epub: true,
+                    });
+                }
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn filtered_picker_entries(&self) -> Vec<usize> {
+        if self.picker_filter.is_empty() {
+            return (0..self.picker_entries.len()).collect();
+        }
+        let filter_lower = self.picker_filter.to_lowercase();
+        self.picker_entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.name.to_lowercase().contains(&filter_lower))
+            .map(|(i, _)| i)
+            .collect()
+    }
+}

@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="uid">test-font-enc</dc:identifier>
+    <dc:title>Font Encrypted Test</dc:title>
+    <dc:creator>Test</dc:creator>
+  </metadata>
+  <manifest>
+    <item id="ch1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="font1" href="fonts/custom.ttf" media-type="font/ttf"/>
+  </manifest>
+  <spine>
+    <itemref idref="ch1"/>
+  </spine>
+</package>
