@@ -34,3 +34,4 @@ Thumbs.db
 # Test artifacts (not fixture sources)
 *.bak
 ecdict_index.json
+ecdict_index.json
