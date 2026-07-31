@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-#[allow(dead_code)]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("cannot open \"{0}\": {1}")]
@@ -19,7 +18,6 @@ pub enum Error {
     Message(String),
 }
 
-#[allow(dead_code)]
 impl Error {
     pub fn io_path<P: Into<PathBuf>>(path: P, err: std::io::Error) -> Self {
         Self::Io(path.into(), err)

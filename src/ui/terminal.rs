@@ -15,7 +15,6 @@ use crate::error::Error;
 use super::app::App;
 use super::reader;
 
-#[allow(dead_code)]
 pub async fn run_app(mut app: App) -> Result<(), Error> {
     execute!(io::stdout(), EnterAlternateScreen,).map_err(|e| Error::io_path("stdout", e))?;
     enable_raw_mode().map_err(|e| Error::io_path("raw mode", e))?;
@@ -42,7 +41,8 @@ pub async fn run_app(mut app: App) -> Result<(), Error> {
             break;
         }
 
-        terminal.draw(|frame| reader::render(frame, &app))
+        terminal
+            .draw(|frame| reader::render(frame, &app))
             .map_err(|e| Error::io_path("terminal draw", e))?;
     }
 

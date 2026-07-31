@@ -1,7 +1,6 @@
 use crate::StyledSegment;
 use ratatui::style::{Color, Modifier, Style};
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Theme {
     Dark,
@@ -11,7 +10,6 @@ pub enum Theme {
 }
 
 impl Theme {
-    #[allow(dead_code)]
     pub fn name(&self) -> &str {
         match self {
             Theme::Dark => "dark",
@@ -21,7 +19,6 @@ impl Theme {
         }
     }
 
-    #[allow(dead_code)]
     pub fn from_name(s: &str) -> Option<Theme> {
         match s {
             "dark" => Some(Theme::Dark),
@@ -43,7 +40,6 @@ impl Theme {
         .into_iter()
     }
 
-    #[allow(dead_code)]
     pub fn next_theme(&self) -> Theme {
         match self {
             Theme::Dark => Theme::Light,
@@ -53,7 +49,6 @@ impl Theme {
         }
     }
 
-    #[allow(dead_code)]
     pub fn background(&self) -> Color {
         match self {
             Theme::Dark => Color::Rgb(0, 0, 0),
@@ -63,7 +58,6 @@ impl Theme {
         }
     }
 
-    #[allow(dead_code)]
     pub fn foreground(&self) -> Color {
         match self {
             Theme::Dark => Color::Rgb(204, 204, 204),
@@ -74,7 +68,6 @@ impl Theme {
     }
 }
 
-#[allow(dead_code)]
 pub fn style_for_segment(seg: &StyledSegment, theme: &Theme) -> Style {
     let mut mods = Modifier::empty();
     if seg.is_heading {
@@ -101,7 +94,6 @@ pub fn style_for_segment(seg: &StyledSegment, theme: &Theme) -> Style {
         .add_modifier(mods)
 }
 
-#[allow(dead_code)]
-pub fn map_rgb_to_terminal(r: u8, g: u8, b: u8, _theme: &Theme) -> Color {
+fn map_rgb_to_terminal(r: u8, g: u8, b: u8, _theme: &Theme) -> Color {
     Color::Rgb(r, g, b)
 }

@@ -6,7 +6,6 @@ use ratatui::Frame;
 
 use super::app::App;
 
-#[allow(dead_code)]
 pub fn draw_picker(frame: &mut Frame, app: &App) {
     let area = frame.area();
     let theme = app.theme;

@@ -7,7 +7,6 @@ use crate::{StyledSegment, TextStyle};
 pub const MIN_TERMINAL_ROWS: usize = 5;
 pub const MIN_TERMINAL_COLS: usize = 10;
 
-
 /// Paginates styled segments into rendered pages.
 ///
 /// Returns `Vec<Vec<Vec<StyledSegment>>>` — pages, lines, segments.
@@ -43,9 +42,10 @@ pub fn paginate(
     }
 
     // Strip leading blank lines caused by BOM or whitespace before content.
-    while all_lines.first().is_some_and(|line| {
-        line.first().is_none_or(|seg| seg.text.trim().is_empty())
-    }) {
+    while all_lines
+        .first()
+        .is_some_and(|line| line.first().is_none_or(|seg| seg.text.trim().is_empty()))
+    {
         all_lines.remove(0);
     }
 

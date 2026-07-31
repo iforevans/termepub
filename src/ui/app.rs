@@ -9,7 +9,6 @@ use crate::StyledSegment;
 
 use super::theme::Theme;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Reader,
@@ -21,15 +20,13 @@ pub enum Mode {
     Dictionary,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
-pub struct PickerEntry {
-    pub name: String,
-    pub is_dir: bool,
-    pub is_epub: bool,
+pub(super) struct PickerEntry {
+    pub(super) name: String,
+    pub(super) is_dir: bool,
+    pub(super) is_epub: bool,
 }
 
-#[allow(dead_code)]
 pub struct App {
     pub book: Option<EpubBook>,
     pub book_path: Option<PathBuf>,
@@ -48,7 +45,7 @@ pub struct App {
     pub popup_message: Option<String>,
     pub toc_index: usize,
     pub picker_dir: PathBuf,
-    pub picker_entries: Vec<PickerEntry>,
+    pub(super) picker_entries: Vec<PickerEntry>,
     pub picker_filter: String,
     pub picker_selected: usize,
     pub dictionary_word: String,
@@ -59,7 +56,6 @@ pub struct App {
 }
 
 impl App {
-    #[allow(dead_code)]
     pub fn new(use_css: bool, terminal_size: (u16, u16)) -> Self {
         Self {
             book: None,
@@ -90,7 +86,6 @@ impl App {
         }
     }
 
-    #[allow(dead_code)]
     pub fn get_last_book_path(&self) -> Option<PathBuf> {
         self.state_store
             .as_ref()
@@ -98,7 +93,20 @@ impl App {
             .map(PathBuf::from)
     }
 
-    #[allow(dead_code)]
+    /// Loads persisted global settings from the state store.
+    pub fn load_global_settings(&mut self) {
+        if let Some(ref store) = self.state_store {
+            // Load theme
+            if let Some(theme) = Theme::from_name(&store.get_theme()) {
+                self.theme = theme;
+            }
+            // Load show_header
+            self.show_header = store.get_show_header();
+            // Load justify
+            self.justify = store.get_justify_text();
+        }
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
         // Quit is available in every mode except input modes where 'q' is text.
         if key.code == KeyCode::Char('q') && !matches!(self.mode, Mode::Dictionary | Mode::Search) {
@@ -433,35 +441,30 @@ impl App {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn go_to_page(&mut self, page: usize) {
+    fn go_to_page(&mut self, page: usize) {
         if self.pages.is_empty() {
             return;
         }
         self.page_index = page.min(self.pages.len() - 1);
     }
 
-    #[allow(dead_code)]
-    pub fn next_page(&mut self) {
+    fn next_page(&mut self) {
         if self.page_index + 1 < self.pages.len() {
             self.page_index += 1;
         }
     }
 
-    #[allow(dead_code)]
-    pub fn prev_page(&mut self) {
+    fn prev_page(&mut self) {
         if self.page_index > 0 {
             self.page_index -= 1;
         }
     }
 
-    #[allow(dead_code)]
-    pub fn first_page(&mut self) {
+    fn first_page(&mut self) {
         self.page_index = 0;
     }
 
-    #[allow(dead_code)]
-    pub fn next_chapter(&mut self) {
+    fn next_chapter(&mut self) {
         if let Some(ref book) = self.book {
             let max_ch = book.chapter_count().saturating_sub(1);
             if self.chapter_index < max_ch {
@@ -470,29 +473,25 @@ impl App {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn prev_chapter(&mut self) {
+    fn prev_chapter(&mut self) {
         if self.chapter_index > 0 {
             self.navigate_chapter(self.chapter_index - 1);
         }
     }
 
-    #[allow(dead_code)]
-    pub fn last_page(&mut self) {
+    fn last_page(&mut self) {
         if !self.pages.is_empty() {
             self.page_index = self.pages.len() - 1;
         }
     }
 
-    #[allow(dead_code)]
-    pub fn navigate_chapter(&mut self, chapter_idx: usize) {
+    fn navigate_chapter(&mut self, chapter_idx: usize) {
         self.chapter_index = chapter_idx;
         self.page_index = 0;
         self.paginate();
     }
 
-    #[allow(dead_code)]
-    pub fn paginate(&mut self) {
+    fn paginate(&mut self) {
         if let Some(ref book) = self.book {
             let chapters = book.chapters();
             if self.chapter_index < chapters.len() {
@@ -513,9 +512,8 @@ impl App {
         }
     }
 
-    #[allow(dead_code)]
     pub fn open_book(&mut self, path: PathBuf) -> Result<(), Error> {
-        let book = EpubBook::open(&path)?;
+        let book = EpubBook::open(&path, self.use_css)?;
 
         let book_hash = StateStore::book_key(&path.to_string_lossy());
         let (saved_chapter, saved_page) = if let Some(ref store) = self.state_store {
@@ -555,14 +553,12 @@ impl App {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn resize(&mut self, cols: u16, rows: u16) {
         self.terminal_size = (cols, rows);
         self.paginate();
     }
 
-    #[allow(dead_code)]
-    pub fn set_bookmark(&mut self) {
+    fn set_bookmark(&mut self) {
         if let Some(ref mut store) = self.state_store {
             if let Some(ref path) = self.book_path {
                 let key = StateStore::book_key(&path.to_string_lossy());
@@ -571,7 +567,6 @@ impl App {
         }
     }
 
-    #[allow(dead_code)]
     pub fn go_to_bookmark(&mut self) {
         if let Some(ref store) = self.state_store {
             if let Some(ref path) = self.book_path {
@@ -586,24 +581,20 @@ impl App {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn cycle_theme(&mut self) {
+    fn cycle_theme(&mut self) {
         self.theme = self.theme.next_theme();
     }
 
-    #[allow(dead_code)]
-    pub fn toggle_header(&mut self) {
+    fn toggle_header(&mut self) {
         self.show_header = !self.show_header;
         self.paginate();
     }
 
-    #[allow(dead_code)]
-    pub fn toggle_justify(&mut self) {
+    fn toggle_justify(&mut self) {
         self.justify = !self.justify;
         self.paginate();
     }
 
-    #[allow(dead_code)]
     pub fn save_state(&mut self) {
         if let Some(ref mut store) = self.state_store {
             if let Some(ref path) = self.book_path {
@@ -613,6 +604,7 @@ impl App {
                 // Save theme and settings
                 store.set_global_str("theme", self.theme.name());
                 store.set_global_bool("show_header", self.show_header);
+                store.set_global_bool("justify_text", self.justify);
 
                 let _ = store.save();
             }
@@ -620,7 +612,6 @@ impl App {
         self.dirty = false;
     }
 
-    #[allow(dead_code)]
     pub fn refresh_picker(&mut self) {
         self.picker_entries.clear();
         self.picker_selected = 0;
@@ -688,7 +679,6 @@ impl App {
         }
     }
 
-    #[allow(dead_code)]
     pub fn filtered_picker_entries(&self) -> Vec<usize> {
         if self.picker_filter.is_empty() {
             return (0..self.picker_entries.len()).collect();

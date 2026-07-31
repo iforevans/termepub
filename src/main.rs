@@ -30,6 +30,7 @@ async fn run() -> Result<(), Error> {
     // Try state store
     if let Ok(store) = termepub::StateStore::open_default() {
         app.state_store = Some(store);
+        app.load_global_settings();
     }
 
     // Startup: explicit path -> prior book -> picker

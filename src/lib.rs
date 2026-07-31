@@ -73,7 +73,7 @@ impl EpubBook {
     /// - Package document (OPF) is present and parseable.
     /// - Spine contains at least one item.
     /// - TOC (nav or NCX) is loaded.
-    pub fn open(path: &Path) -> Result<Self, crate::error::Error> {
+    pub fn open(path: &Path, use_css: bool) -> Result<Self, crate::error::Error> {
         let mut archive = Archive::open(path)?;
 
         // Check for encrypted spine resources.
@@ -115,12 +115,22 @@ impl EpubBook {
             {
                 // EPUB 3 nav document
                 let mut entries = package::parse_nav_toc(&mut archive, &toc_href, &pkg.spine)?;
-                package::resolve_toc_spine_indices(&mut entries, &pkg.manifest, &pkg.spine, toc_base);
+                package::resolve_toc_spine_indices(
+                    &mut entries,
+                    &pkg.manifest,
+                    &pkg.spine,
+                    toc_base,
+                );
                 entries
             } else {
                 // EPUB 2 NCX
                 let mut entries = package::parse_ncx_toc(&mut archive, &toc_href)?;
-                package::resolve_toc_spine_indices(&mut entries, &pkg.manifest, &pkg.spine, toc_base);
+                package::resolve_toc_spine_indices(
+                    &mut entries,
+                    &pkg.manifest,
+                    &pkg.spine,
+                    toc_base,
+                );
                 entries
             }
         } else {
@@ -129,7 +139,6 @@ impl EpubBook {
         };
 
         // Load spine chapters.
-        let use_css = true; // CSS toggle will be wired from app state in Phase 7
         let mut chapters = Vec::with_capacity(pkg.spine.len());
 
         for idref in &pkg.spine {

@@ -20,7 +20,7 @@ use tempfile::TempDir;
 fn too_many_members_is_rejected() {
     let tmp = TempDir::new().unwrap();
     let path = build_many_members_epub(tmp.path(), "many", 10_001, 1);
-    let result = termepub::EpubBook::open(&path);
+    let result = termepub::EpubBook::open(&path, true);
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -66,7 +66,7 @@ fn suspicious_compression_ratio_is_rejected() {
 fn encrypted_spine_resource_is_rejected() {
     let tmp = TempDir::new().unwrap();
     let path = build_epub(tmp.path(), "encrypted", "encrypted_text");
-    let result = termepub::EpubBook::open(&path);
+    let result = termepub::EpubBook::open(&path, true);
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -79,7 +79,7 @@ fn encrypted_spine_resource_is_rejected() {
 fn font_only_encryption_does_not_reject() {
     let tmp = TempDir::new().unwrap();
     let path = build_epub(tmp.path(), "font_encrypted", "font_encrypted");
-    let book = termepub::EpubBook::open(&path);
+    let book = termepub::EpubBook::open(&path, true);
     assert!(
         book.is_ok(),
         "font-only encryption should not reject: {:?}",
@@ -95,7 +95,7 @@ fn font_only_encryption_does_not_reject() {
 fn epub2_ncx_loads_toc() {
     let tmp = TempDir::new().unwrap();
     let path = build_epub(tmp.path(), "epub2", "epub2_ncx");
-    let book = termepub::EpubBook::open(&path).expect("should open EPUB 2");
+    let book = termepub::EpubBook::open(&path, true).expect("should open EPUB 2");
     assert_eq!(book.title(), "EPUB 2 NCX Test Book");
     assert_eq!(book.author(), "Test Author");
     assert!(
@@ -110,7 +110,7 @@ fn epub2_ncx_loads_toc() {
 fn epub3_nav_loads_toc() {
     let tmp = TempDir::new().unwrap();
     let path = build_epub(tmp.path(), "epub3", "epub3_nav");
-    let book = termepub::EpubBook::open(&path).expect("should open EPUB 3");
+    let book = termepub::EpubBook::open(&path, true).expect("should open EPUB 3");
     assert_eq!(book.title(), "EPUB 3 Nav Test Book");
     assert_eq!(book.author(), "Test Author");
     assert!(
@@ -124,7 +124,7 @@ fn epub3_nav_loads_toc() {
 fn empty_spine_is_rejected() {
     let tmp = TempDir::new().unwrap();
     let path = build_epub(tmp.path(), "empty_spine", "empty_spine");
-    let result = termepub::EpubBook::open(&path);
+    let result = termepub::EpubBook::open(&path, true);
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -137,7 +137,7 @@ fn empty_spine_is_rejected() {
 fn missing_spine_member_produces_placeholder() {
     let tmp = TempDir::new().unwrap();
     let path = build_epub(tmp.path(), "missing", "missing_spine");
-    let book = termepub::EpubBook::open(&path).expect("should open despite missing member");
+    let book = termepub::EpubBook::open(&path, true).expect("should open despite missing member");
     assert!(book.chapter_count() >= 1);
 }
 

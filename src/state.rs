@@ -143,13 +143,11 @@ impl StateStore {
     }
 
     /// Returns whether text should be justified (default: false).
-    #[allow(dead_code)]
     pub fn get_justify_text(&self) -> bool {
         self.get_global_bool("justify_text", false)
     }
 
     /// Returns the last opened book path, if any.
-    #[allow(dead_code)]
     pub fn get_last_book_path(&self) -> Option<String> {
         self.get_global_str("last_book_path")
     }
@@ -187,7 +185,7 @@ impl StateStore {
         let entry = self
             .data
             .as_object_mut()
-            .unwrap()
+            .expect("state root is always an object")
             .entry(String::from(key))
             .or_insert_with(|| serde_json::json!({}));
 
@@ -202,7 +200,7 @@ impl StateStore {
         let entry = self
             .data
             .as_object_mut()
-            .unwrap()
+            .expect("state root is always an object")
             .entry(String::from(key))
             .or_insert_with(|| serde_json::json!({}));
 
@@ -230,12 +228,11 @@ impl StateStore {
     }
 
     /// Sets a global string value in the `_global` object.
-    #[allow(dead_code)]
     pub fn set_global_str(&mut self, key: &str, value: &str) {
         let global = self
             .data
             .as_object_mut()
-            .unwrap()
+            .expect("state root is always an object")
             .entry(String::from("_global"))
             .or_insert_with(|| serde_json::json!({}));
         if let Some(map) = global.as_object_mut() {
@@ -244,12 +241,11 @@ impl StateStore {
     }
 
     /// Sets a global boolean value in the `_global` object.
-    #[allow(dead_code)]
     pub fn set_global_bool(&mut self, key: &str, value: bool) {
         let global = self
             .data
             .as_object_mut()
-            .unwrap()
+            .expect("state root is always an object")
             .entry(String::from("_global"))
             .or_insert_with(|| serde_json::json!({}));
         if let Some(map) = global.as_object_mut() {

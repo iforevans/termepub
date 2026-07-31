@@ -2,7 +2,7 @@
 
 A terminal EPUB reader with a clean, keyboard-driven interface. Written in Rust for speed, reliability, and zero runtime dependencies.
 
-**Version:** 2.1.0 (2026-07-30)
+**Version:** 2.2.0 (2026-07-31)
 
 ## Features
 
@@ -15,7 +15,7 @@ A terminal EPUB reader with a clean, keyboard-driven interface. Written in Rust 
 - **Progress Tracking:** Overall book pagination with percentage
 - **CSS Styling:** Inline CSS support (bold, underline, colors)
 - **Justified Text:** Toggle justified text alignment
-- **Dictionary Lookup:** Built-in dictionary with 160K+ words
+- **Dictionary Lookup:** 160K+ word dictionary (ECDICT)
 - **Responsive Layout:** Terminal resize support with automatic re-pagination
 - **Safe EPUB Handling:** Bounded archive reads with encryption and size limits
 
@@ -71,7 +71,7 @@ cp target/release/termepub ~/.local/bin/
 
 ### Prebuilt binary
 
-Download the latest release binary and place it on your `PATH`. The release binary is approximately 24 MB (includes the embedded dictionary).
+Download the latest release binary and place it on your `PATH`.
 
 ## CSS Styling Support
 
@@ -93,11 +93,17 @@ The reader supports inline CSS styling from EPUB files:
 - Linux, macOS, or Windows (with a compatible terminal emulator)
 - Terminal with minimum 10 columns × 5 rows; recommended 80×24
 - 256-color terminal support for optimal color rendering
-- No runtime dependencies (self-contained binary)
+- No runtime dependencies (no Python, no external libraries)
+- ECDICT dictionary file (`ecdict_index.json`) for dictionary lookup
 
 ## Dictionary
 
-The reader includes an embedded dictionary (ECDICT, ~21 MB compressed) with 160,000+ modern English definitions. The dictionary is built into the binary — no network access or separate data files are needed. Dictionary lookup is performed on first use via lazy loading.
+The reader uses the ECDICT dictionary (~21 MB, 160,000+ modern English definitions). The dictionary file (`ecdict_index.json`) is loaded from disk on first use via lazy loading. It is searched for in the following locations:
+
+1. `~/.config/termepub/ecdict_index.json`
+2. Next to the `termepub` binary
+
+Place the dictionary file in one of these locations to enable dictionary lookup. The dictionary can be obtained from the [ECDICT project](https://github.com/xu-song/ecdict).
 
 ## State
 
@@ -131,7 +137,7 @@ termepub v2.1.0 is a complete rewrite in Rust. The executable name changed from 
 
 - **Faster startup and rendering** — compiled binary with no interpreter overhead
 - **Self-contained** — no Python runtime or external dependencies required
-- **Embedded dictionary** — no dictionary file installation step on first run
+- **Dictionary lookup** — ECDICT dictionary loaded from disk on first use (place `ecdict_index.json` in `~/.config/termepub/` or next to the binary)
 - **State compatibility** — `~/.config/termepub/state.json` is read and written in the same format; reading position, bookmarks, and theme preferences are preserved
 - **Same keyboard controls** — all v1.x key bindings are preserved
 - **Four themes** — added Solarized Dark and Solarized Light

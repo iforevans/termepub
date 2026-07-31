@@ -10,7 +10,6 @@ use super::app::{App, Mode};
 use super::picker::draw_picker;
 use super::theme::{style_for_segment, Theme};
 
-#[allow(dead_code)]
 pub fn render(frame: &mut Frame, app: &App) {
     match app.mode {
         Mode::Reader => draw_reader(frame, app),
@@ -83,12 +82,11 @@ fn draw_reader(frame: &mut Frame, app: &App) {
 
 fn draw_separator(frame: &mut Frame, theme: &Theme, area: Rect) {
     let sep = "─".repeat(area.width as usize);
-    let line = Paragraph::new(Span::raw(sep))
-        .style(
-            Style::default()
-                .fg(theme.foreground())
-                .bg(theme.background()),
-        );
+    let line = Paragraph::new(Span::raw(sep)).style(
+        Style::default()
+            .fg(theme.foreground())
+            .bg(theme.background()),
+    );
     frame.render_widget(line, area);
 }
 
@@ -282,8 +280,8 @@ fn draw_help(frame: &mut Frame, app: &App) {
         "  k/Up      Page up",
         "  Ctrl-f    Page down",
         "  Ctrl-b    Page up",
-        "  g         First page",
-        "  G         Last page",
+        "  f         First page",
+        "  l         Last page",
         "  t         Table of Contents",
         "  /         Search",
         "  o         File picker",
@@ -352,8 +350,10 @@ fn draw_dictionary(frame: &mut Frame, app: &App) {
     draw_reader(frame, app);
 
     // Size to content
-    let result_content =
-        app.dictionary_result.as_deref().unwrap_or("Type a word and press Enter.");
+    let result_content = app
+        .dictionary_result
+        .as_deref()
+        .unwrap_or("Type a word and press Enter.");
     let inner_w = ((area.width as f64 * 0.7).min(area.width as f64) as usize).saturating_sub(2);
     // Estimate wrapped lines: each line of content may wrap
     let mut wrapped_lines = 0usize;
@@ -408,9 +408,7 @@ fn draw_dictionary(frame: &mut Frame, app: &App) {
         .map(|line| {
             Line::from(Span::styled(
                 format!("{} ", line),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .bg(theme.background()),
+                Style::default().fg(Color::Cyan).bg(theme.background()),
             ))
         })
         .collect();
