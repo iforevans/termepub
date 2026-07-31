@@ -133,7 +133,7 @@ impl App {
                 self.popup_message = Some("Quit? (y/n)".into());
                 true
             }
-            KeyCode::Char('j') | KeyCode::Left => {
+            KeyCode::Left => {
                 if self.page_index == 0 {
                     self.prev_chapter();
                 } else {
@@ -141,7 +141,7 @@ impl App {
                 }
                 true
             }
-            KeyCode::Char('k') | KeyCode::Right => {
+            KeyCode::Right => {
                 if self.page_index + 1 >= self.total_pages {
                     self.next_chapter();
                 } else {
@@ -204,7 +204,7 @@ impl App {
                 self.dirty = true;
                 true
             }
-            KeyCode::Char('J') => {
+            KeyCode::Char('j') => {
                 self.toggle_justify();
                 self.dirty = true;
                 true
