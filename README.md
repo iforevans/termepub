@@ -23,8 +23,8 @@ A terminal EPUB reader with a clean, keyboard-driven interface. Written in Rust 
 
 | Key | Action |
 |-----|--------|
-| `j` / `←` | Previous page |
-| `k` / `→` | Next page (advances chapter at end) |
+| `j` / `←` | Page back (prev chapter at start) |
+| `k` / `→` | Page forward (next chapter at end) |
 | `↑` | Previous chapter |
 | `↓` | Next chapter |
 | `Ctrl-f` / Page Down | Next page |
