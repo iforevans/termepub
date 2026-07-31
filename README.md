@@ -27,16 +27,16 @@ A terminal EPUB reader with a clean, keyboard-driven interface. Written in Rust 
 | `→` | Page forward (next chapter at end) |
 | `↑` | Previous chapter |
 | `↓` | Next chapter |
-| `Ctrl-f` / Page Down | Next page |
-| `Ctrl-b` / Page Up | Previous page |
+| Page Down | Next page |
+| Page Up | Previous page |
 | `f` | Go to first page |
 | `l` | Go to last page |
-| `t` | Table of contents |
+| `i` | Table of contents |
 | `/` | Search |
 | `o` | Open book (file picker) |
 | `m` | Set bookmark |
 | `b` | Go to bookmark |
-| `T` | Cycle theme |
+| `t` | Cycle theme |
 | `h` | Toggle header |
 | `j` | Toggle justification |
 | `d` | Dictionary prompt |

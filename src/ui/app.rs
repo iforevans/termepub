@@ -157,14 +157,6 @@ impl App {
                 self.next_chapter();
                 true
             }
-            KeyCode::Char('f') if key.modifiers == KeyModifiers::CONTROL => {
-                self.next_page();
-                true
-            }
-            KeyCode::Char('b') if key.modifiers == KeyModifiers::CONTROL => {
-                self.prev_page();
-                true
-            }
             KeyCode::PageDown => {
                 self.next_page();
                 true
@@ -181,7 +173,7 @@ impl App {
                 self.last_page();
                 true
             }
-            KeyCode::Char('t') => {
+            KeyCode::Char('i') => {
                 self.mode = Mode::Toc;
                 true
             }
@@ -194,7 +186,7 @@ impl App {
                 self.refresh_picker();
                 true
             }
-            KeyCode::Char('T') => {
+            KeyCode::Char('t') => {
                 self.cycle_theme();
                 self.dirty = true;
                 true
