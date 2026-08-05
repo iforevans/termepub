@@ -53,6 +53,11 @@ impl BookState {
     }
 }
 
+/// Computes the termepub config directory for a given home directory.
+fn config_dir_for(home: &Path) -> PathBuf {
+    home.join(".config").join("termepub")
+}
+
 /// Persistent state store for reading positions, bookmarks, and global
 /// settings.
 pub struct StateStore {
@@ -87,20 +92,19 @@ impl StateStore {
         Self::open(path)
     }
 
-    /// Returns the `~/.config` directory.
+    /// Returns the termepub config directory (`~/.config/termepub`, or
+    /// `$XDG_CONFIG_HOME/termepub` when XDG_CONFIG_HOME is set — matching
+    /// `dictionary::dirs_config_path`).
+    ///
+    /// The directory itself may not exist yet; callers create it as needed.
     fn config_dir() -> Result<PathBuf, Error> {
+        if let Some(config) = std::env::var_os("XDG_CONFIG_HOME") {
+            return Ok(PathBuf::from(config).join("termepub"));
+        }
         let home = std::env::var("HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("."));
-        let dir = home.join(".config");
-        if dir.is_dir() {
-            Ok(dir)
-        } else {
-            Err(Error::Message(format!(
-                "config directory not found: {}",
-                dir.display()
-            )))
-        }
+        Ok(config_dir_for(&home))
     }
 
     /// Loads and validates a state file.
@@ -298,5 +302,22 @@ mod tests {
         let store = StateStore::open(tmp).unwrap();
         assert_eq!(store.get_theme(), "dark");
         assert!(store.get_show_header());
+    }
+
+    #[test]
+    fn config_dir_is_termepub_subdir_of_home_config() {
+        // Regression: config_dir must point at ~/.config/termepub, NOT
+        // ~/.config — writing state.json to the bare .config dir breaks
+        // v1.x state compatibility and litters the user's home.
+        assert_eq!(
+            config_dir_for(Path::new("/home/testuser")),
+            PathBuf::from("/home/testuser/.config/termepub")
+        );
+        assert_eq!(
+            config_dir_for(Path::new("/home/testuser")),
+            PathBuf::from("/home/testuser")
+                .join(".config")
+                .join("termepub")
+        );
     }
 }
