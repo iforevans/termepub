@@ -312,53 +312,40 @@ impl<'a> HtmlExtractor<'a> {
             }
         }
 
-        let len = self.frames.len();
-        let mut found = false;
-
-        for i in (0..len).rev() {
-            if self.frames[i].tag == tag {
-                let cat = self.frames[i].category;
-                // Flush accumulated text before popping, so it retains the style
-                // from the frame being closed.
+        match self.frames.iter().rposition(|f| f.tag == tag) {
+            Some(idx) => {
+                // Malformed nesting recovery: pop the frames ABOVE the match,
+                // then pop the matched frame itself.
+                while self.frames.len() > idx + 1 {
+                    self.flush_current();
+                    self.frames.pop();
+                    self.accum_style = self.top_style();
+                    self.accum_heading = self.frames.last().map(|f| f.is_heading).unwrap_or(false);
+                }
+                let cat = self.frames[idx].category;
                 self.flush_current();
-                // If we flushed actual content from a styled tag boundary,
-                // prevent merging with the next segment.
                 if cat == TagCategory::Inline {
                     self.no_merge_next = true;
                 }
-                self.frames.remove(i);
-                found = true;
-
+                self.frames.pop();
                 if matches!(
-                    cat,
-                    TagCategory::Block
-                        | TagCategory::Heading
-                        | TagCategory::Pre
-                        | TagCategory::ListItem
-                ) && matches!(
                     cat,
                     TagCategory::Block | TagCategory::Heading | TagCategory::Pre
                 ) {
                     self.pending_break = true;
                 }
-
-                // Reset accumulation to match the new top frame
-                self.accum_style = self.top_style();
-                self.accum_heading = self.frames.last().map(|f| f.is_heading).unwrap_or(false);
-                break;
-            } else {
-                self.frames.remove(i);
-                self.flush_current();
                 self.accum_style = self.top_style();
                 self.accum_heading = self.frames.last().map(|f| f.is_heading).unwrap_or(false);
             }
-        }
-
-        if !found {
-            let category = Self::get_tag_category(tag);
-            if matches!(category, TagCategory::Block | TagCategory::Heading) {
+            None => {
+                // Stray closing tag (no matching open frame): never destroy
+                // the frame stack — flush pending text and keep the outer
+                // style context intact for everything that follows.
                 self.flush_current();
-                self.pending_break = true;
+                let category = Self::get_tag_category(tag);
+                if matches!(category, TagCategory::Block | TagCategory::Heading) {
+                    self.pending_break = true;
+                }
             }
         }
     }

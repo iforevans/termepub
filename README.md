@@ -2,20 +2,20 @@
 
 A terminal EPUB reader with a clean, keyboard-driven interface. Written in Rust for speed, reliability, and zero runtime dependencies.
 
-**Version:** 2.2.0 (2026-07-31)
+**Version:** 2.3.0 (2026-08-05)
 
 ## Features
 
-- **File Picker:** Browse and open EPUB files with advanced navigation
-- **Navigation:** Page/chapter forward/back (arrow keys, j/k, Page Up/Down)
-- **Table of Contents:** Interactive TOC for EPUB 2 (NCX) and EPUB 3 (nav document)
+- **File Picker:** Browse and open EPUB files with filtering (press `/` or `s`, then type; Enter keeps the filter, Esc clears it)
+- **Navigation:** Page/chapter forward/back (arrow keys, Page Up/Down; holding a key auto-repeats)
+- **Table of Contents:** Interactive, scrollable TOC for EPUB 2 (NCX) and EPUB 3 (nav document)
 - **Search:** Full-text search with phrase matching across lines and page boundaries
 - **Bookmarks:** Save and restore reading position
 - **Themes:** Four themes — Dark, Light, Solarized Dark, Solarized Light
 - **Progress Tracking:** Overall book pagination with percentage
 - **CSS Styling:** Inline CSS support (bold, underline, colors)
 - **Justified Text:** Toggle justified text alignment
-- **Dictionary Lookup:** 160K+ word dictionary (ECDICT)
+- **Dictionary Lookup:** 160K+ word dictionary (ECDICT), loaded in the background so the first lookup never freezes the UI
 - **Responsive Layout:** Terminal resize support with automatic re-pagination
 - **Safe EPUB Handling:** Bounded archive reads with encryption and size limits
 

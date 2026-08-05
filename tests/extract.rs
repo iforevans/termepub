@@ -166,6 +166,39 @@ fn merge_does_not_cross_whitespace_only_breaks() {
 }
 
 #[test]
+fn stray_closing_tag_keeps_outer_style_context() {
+    // A stray </div> (no matching open frame) must NOT destroy the frame
+    // stack. The old code removed every frame on a stray close, which
+    // reset the accumulated style — "more" here must still inherit the
+    // red color from the outer <span style="color:red">.
+    let segments = termepub::extract_html(
+        "<span style=\"color:red\"><b>bold</b></div>more</span>",
+        true,
+    );
+    let seg = segments
+        .iter()
+        .find(|s| s.text.contains("more"))
+        .expect("should have 'more' segment");
+    assert_eq!(
+        seg.style.foreground,
+        Some([255, 0, 0]),
+        "stray closing tag should not lose outer style context"
+    );
+}
+
+#[test]
+fn stray_closing_tag_leaves_later_styles_intact() {
+    // After a stray </div>, a newly opened <b> must still apply bold —
+    // the old bug wiped every frame, leaving later styling on a bare stack.
+    let segments = termepub::extract_html("<p>intro</div><b>bold text</b>", true);
+    let seg = segments
+        .iter()
+        .find(|s| s.text.contains("bold text"))
+        .expect("should have bold text segment");
+    assert!(seg.style.bold, "bold should survive a stray closing tag");
+}
+
+#[test]
 fn unicode_sanitization_preserves_printable_unicode() {
     let segments = termepub::extract_html("<p>café señor 中文</p>", true);
     let texts: Vec<_> = segments.iter().map(|s| s.text.as_str()).collect();

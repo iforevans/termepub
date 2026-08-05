@@ -239,6 +239,14 @@ pub fn lookup_word(word: &str) -> String {
     dictionary::lookup_word(word)
 }
 
+/// Starts loading the dictionary in the background (idempotent).
+///
+/// Safe to call at startup; lookups before the load finishes report
+/// "still loading" instead of blocking.
+pub fn preload_dictionary() {
+    dictionary::preload_dictionary();
+}
+
 // --- Domain models ---
 
 /// A table-of-contents entry.

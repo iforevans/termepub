@@ -27,6 +27,10 @@ async fn run() -> Result<(), Error> {
     let (cols, rows) = crossterm::terminal::size().map_err(|e| Error::io_path("terminal", e))?;
     let mut app = ui::app::App::new(cli.use_css(), (cols, rows));
 
+    // Start the dictionary load in the background so the first lookup
+    // doesn't block the UI on the ~21 MB parse.
+    termepub::preload_dictionary();
+
     // Try state store
     if let Ok(store) = termepub::StateStore::open_default() {
         app.state_store = Some(store);
@@ -38,7 +42,7 @@ async fn run() -> Result<(), Error> {
         app.open_book(path.clone())?;
         app.mode = ui::app::Mode::Reader;
     } else if let Some(last_path) = app.get_last_book_path() {
-        if let Ok(absolute) = std::fs::canonicalize(&last_path) {
+        if let Ok(absolute) = std::path::absolute(&last_path) {
             let _ = app.open_book(absolute);
             app.mode = ui::app::Mode::Reader;
         }

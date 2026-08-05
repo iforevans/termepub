@@ -75,9 +75,14 @@ pub fn draw_picker(frame: &mut Frame, app: &App) {
     frame.render_widget(paragraph, chunks[1]);
 
     // Footer hints
-    let hints = if !app.picker_filter.is_empty() {
+    let hints = if app.picker_filtering {
         format!(
-            "Filter: '{}' | j/k:navigate Enter:open Esc:back /:filter",
+            "Filtering: '{}' | type to filter, Enter done, Esc clear",
+            app.picker_filter
+        )
+    } else if !app.picker_filter.is_empty() {
+        format!(
+            "Filter: '{}' | j/k:navigate Enter:open Esc:back /:edit",
             app.picker_filter
         )
     } else {

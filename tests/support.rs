@@ -1,3 +1,11 @@
+//! Shared helpers for integration tests: build EPUB fixtures from the
+//! tracked `tests/fixtures/` tree at runtime.
+//!
+//! This module is included via `mod support;` in several test binaries,
+//! each of which uses only some helpers — so the others are "dead" per
+//! compilation unit. Allow dead code rather than warning per test crate.
+#![allow(dead_code)]
+
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};

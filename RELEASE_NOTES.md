@@ -1,5 +1,32 @@
 # Release Notes
 
+## termepub v2.3.0 — 2026-08-05
+
+Bug-fix and UX release.
+
+### What Changed
+
+- **State file location fixed** — `state.json` is now read/written at `~/.config/termepub/state.json` (it was incorrectly written to `~/.config/state.json`). Reading positions, bookmarks, and theme from v1.x are picked up again automatically.
+- **Stable book keys** — state keys are derived from lexically absolute paths (no symlink resolution), so opening a book via a relative path (`termepub book.epub`) and via its absolute path share one saved position.
+- **File picker filtering implemented** — press `/` or `s` in the picker to filter entries by typing; Enter keeps the filter, Esc clears it. (Previously advertised in the help text but non-functional.)
+- **Terminal always restored** — a Drop guard restores raw mode / alternate screen on errors and panics, not just clean exits.
+- **Key auto-repeat** — holding navigation keys (arrows, Page Up/Down, `f`, `l`) now flips pages repeatedly; typing repeats in search, dictionary, and picker-filter input. Toggle keys and quit never auto-repeat.
+- **TOC scrolling** — the selection stays visible in long tables of contents.
+- **HTML extractor robustness** — a stray closing tag no longer wipes the style stack for the rest of the chapter.
+- **Dictionary robustness** — the ~21 MB dictionary loads on a background thread (no UI freeze on first lookup, with a "still loading" message in the brief window) and malformed entries are skipped instead of aborting the entire load.
+- **Esc fixed** in TOC, search, and picker modes (previously only Ctrl-C worked despite the help text); Ctrl-C while picker-filtering clears the filter instead of typing a literal `c`.
+- **Repository hygiene** — bundled `.epub` test books are no longer tracked; `*.epub` is gitignored.
+
+### Technical Details
+
+- Test coverage: 80 passing tests locally (unit, CLI, EPUB parsing, HTML extraction, pagination, state persistence, dictionary lookup, responsive layout, PTY integration). Dictionary-lookup tests skip gracefully when the optional ECDICT dictionary is not installed; PTY tests build their EPUB fixtures from the tracked `tests/fixtures/` tree.
+
+### Known Limitations
+
+- Block-level inline CSS (`<p style="...">`, `<section style="...">`) colors are parsed but do not currently style text — only inline tags (`<span>`, `<b>`, etc.) and headings carry styles. (Pre-existing, noted during v2.3.0 review.)
+
+---
+
 ## termepub v2.0.0 — 2026-07-30
 
 Complete rewrite in Rust. Faster startup, zero runtime dependencies, self-contained binary with embedded dictionary.

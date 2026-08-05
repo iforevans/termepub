@@ -15,8 +15,21 @@ use crate::error::Error;
 use super::app::App;
 use super::reader;
 
+/// Restores terminal state when dropped, so every exit path — including
+/// errors and panics — leaves the terminal usable instead of stuck in raw
+/// mode / alternate screen.
+struct TerminalGuard;
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = disable_raw_mode();
+    }
+}
+
 pub async fn run_app(mut app: App) -> Result<(), Error> {
-    execute!(io::stdout(), EnterAlternateScreen,).map_err(|e| Error::io_path("stdout", e))?;
+    execute!(io::stdout(), EnterAlternateScreen).map_err(|e| Error::io_path("stdout", e))?;
+    let _guard = TerminalGuard;
     enable_raw_mode().map_err(|e| Error::io_path("raw mode", e))?;
 
     let backend = CrosstermBackend::new(io::stdout());
@@ -26,7 +39,11 @@ pub async fn run_app(mut app: App) -> Result<(), Error> {
         if event::poll(Duration::from_millis(100)).map_err(|e| Error::io_path("event poll", e))? {
             match event::read().map_err(|e| Error::io_path("event read", e))? {
                 Event::Key(key) => {
-                    if key.kind == KeyEventKind::Press {
+                    // Handle presses and — for navigation/typing keys —
+                    // auto-repeat, so holding an arrow key flips pages.
+                    if key.kind == KeyEventKind::Press
+                        || (key.kind == KeyEventKind::Repeat && app.is_repeat_safe(key))
+                    {
                         app.handle_key(key);
                     }
                 }
@@ -47,12 +64,6 @@ pub async fn run_app(mut app: App) -> Result<(), Error> {
     }
 
     app.save_state();
-    restore_terminal();
 
     Ok(())
-}
-
-fn restore_terminal() {
-    let _ = execute!(io::stdout(), LeaveAlternateScreen,);
-    let _ = disable_raw_mode();
 }

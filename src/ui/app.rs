@@ -47,6 +47,7 @@ pub struct App {
     pub picker_dir: PathBuf,
     pub(super) picker_entries: Vec<PickerEntry>,
     pub picker_filter: String,
+    pub picker_filtering: bool,
     pub picker_selected: usize,
     pub dictionary_word: String,
     pub dictionary_result: Option<String>,
@@ -77,6 +78,7 @@ impl App {
             picker_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             picker_entries: Vec::new(),
             picker_filter: String::new(),
+            picker_filtering: false,
             picker_selected: 0,
             dictionary_word: String::new(),
             dictionary_result: None,
@@ -107,9 +109,48 @@ impl App {
         }
     }
 
+    /// Whether an auto-repeat (held-key) event should be acted on.
+    /// Navigation and typing repeat; toggles and destructive keys do not,
+    /// so holding a key never flickers a setting or risks an accidental quit.
+    pub fn is_repeat_safe(&self, key: KeyEvent) -> bool {
+        match self.mode {
+            Mode::Reader => matches!(
+                key.code,
+                KeyCode::Left
+                    | KeyCode::Right
+                    | KeyCode::Up
+                    | KeyCode::Down
+                    | KeyCode::PageUp
+                    | KeyCode::PageDown
+                    | KeyCode::Char('f')
+                    | KeyCode::Char('l')
+            ),
+            Mode::Search | Mode::Dictionary => true,
+            Mode::Toc => true,
+            Mode::Picker => {
+                if self.picker_filtering {
+                    // Typing into the filter repeats like any text input.
+                    true
+                } else {
+                    // Navigation repeats; '/' and 's' must not, or holding
+                    // them would re-enter filter mode and type the key.
+                    matches!(
+                        key.code,
+                        KeyCode::Up | KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('k')
+                    )
+                }
+            }
+            Mode::Popup | Mode::Help => false,
+        }
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
         // Quit is available in every mode except input modes where 'q' is text.
-        if key.code == KeyCode::Char('q') && !matches!(self.mode, Mode::Dictionary | Mode::Search) {
+        let typing_filter = self.mode == Mode::Picker && self.picker_filtering;
+        if key.code == KeyCode::Char('q')
+            && !matches!(self.mode, Mode::Dictionary | Mode::Search)
+            && !typing_filter
+        {
             self.mode = Mode::Popup;
             self.popup_message = Some("Quit? (y/n)".into());
             return true;
@@ -237,7 +278,12 @@ impl App {
                 self.search_query.clear();
                 true
             }
-            KeyCode::Esc | KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
+            KeyCode::Esc => {
+                self.mode = Mode::Reader;
+                self.search_query.clear();
+                true
+            }
+            KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
                 self.mode = Mode::Reader;
                 self.search_query.clear();
                 true
@@ -282,7 +328,11 @@ impl App {
                 self.mode = Mode::Reader;
                 true
             }
-            KeyCode::Esc | KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
+            KeyCode::Esc => {
+                self.mode = Mode::Reader;
+                true
+            }
+            KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
                 self.mode = Mode::Reader;
                 true
             }
@@ -291,6 +341,38 @@ impl App {
     }
 
     fn handle_picker_key(&mut self, key: KeyEvent) -> bool {
+        // Filter mode: printable keys build the filter; j/k become literal
+        // text instead of navigation.
+        if self.picker_filtering {
+            match key.code {
+                KeyCode::Esc => {
+                    self.clear_picker_filter();
+                    return true;
+                }
+                KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
+                    self.clear_picker_filter();
+                    return true;
+                }
+                KeyCode::Char(c) => {
+                    self.picker_filter.push(c);
+                    self.picker_selected = 0;
+                    return true;
+                }
+                KeyCode::Backspace => {
+                    self.picker_filter.pop();
+                    self.picker_selected = 0;
+                    return true;
+                }
+                KeyCode::Enter => {
+                    // Keep the filter applied; the next Enter opens the
+                    // selection.
+                    self.picker_filtering = false;
+                    return true;
+                }
+                _ => return true,
+            }
+        }
+
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => {
                 let indices = self.filtered_picker_entries();
@@ -314,13 +396,15 @@ impl App {
                     let entry = &self.picker_entries[idx];
                     if entry.name == ".." {
                         self.picker_dir.pop();
+                        self.clear_picker_filter();
                         self.refresh_picker();
                     } else if entry.is_dir {
                         self.picker_dir.push(&entry.name);
+                        self.clear_picker_filter();
                         self.refresh_picker();
                     } else if entry.is_epub {
                         let path = self.picker_dir.join(&entry.name);
-                        if let Ok(absolute) = std::fs::canonicalize(&path) {
+                        if let Ok(absolute) = std::path::absolute(&path) {
                             if self.open_book(absolute).is_ok() {
                                 self.mode = Mode::Reader;
                             }
@@ -329,18 +413,33 @@ impl App {
                 }
                 true
             }
-            KeyCode::Esc | KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
+            KeyCode::Esc => {
+                self.clear_picker_filter();
+                if self.book.is_some() {
+                    self.mode = Mode::Reader;
+                }
+                true
+            }
+            KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
+                self.clear_picker_filter();
                 if self.book.is_some() {
                     self.mode = Mode::Reader;
                 }
                 true
             }
             KeyCode::Char('s') | KeyCode::Char('/') => {
-                self.mode = Mode::Search;
+                self.picker_selected = 0;
+                self.picker_filtering = true;
                 true
             }
             _ => false,
         }
+    }
+
+    /// Clears the picker filter and leaves filter mode.
+    fn clear_picker_filter(&mut self) {
+        self.picker_filtering = false;
+        self.picker_filter.clear();
     }
 
     fn handle_popup_key(&mut self, key: KeyEvent) -> bool {
@@ -505,6 +604,14 @@ impl App {
     }
 
     pub fn open_book(&mut self, path: PathBuf) -> Result<(), Error> {
+        // Lexically absolute path for stable state keys (no symlink
+        // resolution), so a book opened via a relative path and via its
+        // absolute path share one state entry and one saved position.
+        let path = match std::path::absolute(&path) {
+            Ok(abs) => abs,
+            Err(_) => path,
+        };
+
         let book = EpubBook::open(&path, self.use_css)?;
 
         let book_hash = StateStore::book_key(&path.to_string_lossy());
@@ -682,5 +789,125 @@ impl App {
             .filter(|(_, entry)| entry.name.to_lowercase().contains(&filter_lower))
             .map(|(i, _)| i)
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyCode;
+
+    fn app() -> App {
+        App::new(true, (80, 24))
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn with_picker(mut app: App) -> App {
+        app.mode = Mode::Picker;
+        app.picker_entries = vec![
+            PickerEntry {
+                name: "steel-beach.epub".into(),
+                is_dir: false,
+                is_epub: true,
+            },
+            PickerEntry {
+                name: "neuromancer.epub".into(),
+                is_dir: false,
+                is_epub: true,
+            },
+            PickerEntry {
+                name: "notes".into(),
+                is_dir: true,
+                is_epub: false,
+            },
+        ];
+        app
+    }
+
+    #[test]
+    fn picker_slash_enters_filter_mode_and_typing_filters() {
+        let mut app = with_picker(app());
+        app.handle_key(key(KeyCode::Char('/')));
+        assert!(app.picker_filtering, "'/' should enter filter mode");
+
+        for c in ['s', 't', 'e'] {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        assert_eq!(app.picker_filter, "ste");
+        let indices = app.filtered_picker_entries();
+        assert_eq!(indices, vec![0], "only steel-beach.epub matches 'ste'");
+
+        // Backspace edits the filter.
+        app.handle_key(key(KeyCode::Backspace));
+        assert_eq!(app.picker_filter, "st");
+
+        // Enter keeps the filter applied but leaves filter mode.
+        app.handle_key(key(KeyCode::Enter));
+        assert!(!app.picker_filtering);
+        assert_eq!(app.picker_filter, "st");
+    }
+
+    #[test]
+    fn picker_filter_esc_clears_and_q_types_instead_of_quitting() {
+        let mut app = with_picker(app());
+        app.handle_key(key(KeyCode::Char('/')));
+        app.handle_key(key(KeyCode::Char('q')));
+        assert_eq!(
+            app.mode,
+            Mode::Picker,
+            "'q' while filtering should type, not quit"
+        );
+        assert_eq!(app.picker_filter, "q");
+
+        app.handle_key(key(KeyCode::Esc));
+        assert!(!app.picker_filtering);
+        assert!(app.picker_filter.is_empty(), "Esc should clear the filter");
+    }
+
+    #[test]
+    fn repeat_safe_allows_navigation_and_typing_but_not_toggles() {
+        let mut app = app();
+        app.mode = Mode::Reader;
+        assert!(app.is_repeat_safe(key(KeyCode::Right)));
+        assert!(app.is_repeat_safe(key(KeyCode::PageDown)));
+        assert!(
+            !app.is_repeat_safe(key(KeyCode::Char('t'))),
+            "theme toggle must not repeat"
+        );
+        assert!(
+            !app.is_repeat_safe(key(KeyCode::Char('q'))),
+            "quit must not repeat"
+        );
+
+        app.mode = Mode::Search;
+        assert!(
+            app.is_repeat_safe(key(KeyCode::Char('a'))),
+            "typing repeats"
+        );
+
+        app.mode = Mode::Picker;
+        app.picker_filtering = false;
+        assert!(
+            app.is_repeat_safe(key(KeyCode::Down)),
+            "picker navigation repeats"
+        );
+        assert!(
+            !app.is_repeat_safe(key(KeyCode::Char('/'))),
+            "filter trigger must not repeat outside filter mode"
+        );
+        app.picker_filtering = true;
+        assert!(
+            app.is_repeat_safe(key(KeyCode::Char('a'))),
+            "filter typing repeats"
+        );
+
+        app.mode = Mode::Popup;
+        assert!(
+            !app.is_repeat_safe(key(KeyCode::Char('y'))),
+            "destructive keys must not repeat"
+        );
     }
 }

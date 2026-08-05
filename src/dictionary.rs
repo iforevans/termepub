@@ -16,14 +16,31 @@ use std::sync::OnceLock;
 /// Maximum fuzzy-matching candidates to examine.
 const MAX_CANDIDATES: usize = 5_000;
 
-/// Lazy-loaded dictionary data.
+/// Lazy-loaded dictionary data. `None` until the background load settles;
+/// `Some(None)` means the load finished but no dictionary file was found.
 static DICTIONARY: OnceLock<Option<BTreeMap<String, Definition>>> = OnceLock::new();
+
+/// Guards the one-time spawn of the background loader.
+static DICT_LOAD_STARTED: OnceLock<()> = OnceLock::new();
 
 /// A dictionary entry.
 #[derive(Debug, Clone)]
 struct Definition {
     headword: String,
     definition: String,
+}
+
+/// Kicks off background dictionary loading (idempotent, non-blocking).
+///
+/// The first call spawns a worker thread that parses the JSON and stores
+/// the result. `lookup_word` reports "still loading" until it finishes, so
+/// the UI thread never blocks on the ~21 MB parse.
+pub fn preload_dictionary() {
+    DICT_LOAD_STARTED.get_or_init(|| {
+        std::thread::spawn(|| {
+            let _ = DICTIONARY.set(load_dictionary());
+        });
+    });
 }
 
 /// Resolves the path to the dictionary file.
@@ -71,7 +88,12 @@ fn load_dictionary() -> Option<BTreeMap<String, Definition>> {
 
     let mut map = BTreeMap::new();
     for (word, val) in parsed {
-        let obj = val.as_object()?;
+        // Tolerate malformed entries: a single bad row must not abort the
+        // whole load (the file has 160K+ entries; one non-object value
+        // would otherwise make the entire dictionary unavailable).
+        let Some(obj) = val.as_object() else {
+            continue;
+        };
         let headword = obj
             .get("headword")
             .and_then(|v| v.as_str())
@@ -93,47 +115,47 @@ fn load_dictionary() -> Option<BTreeMap<String, Definition>> {
     Some(map)
 }
 
-/// Returns the dictionary, loading it lazily on first access.
-fn get_dictionary() -> Option<&'static BTreeMap<String, Definition>> {
-    DICTIONARY.get_or_init(load_dictionary).as_ref()
-}
-
 /// Looks up a word in the dictionary.
 ///
 /// First tries exact lowercase match, then retries with punctuation
 /// stripped.  If no exact match is found, returns deterministic
-/// suggestions limited to `MAX_CANDIDATES` candidates.
+/// suggestions limited to `MAX_CANDIDATES` candidates.  If the background
+/// load has not finished yet, returns a friendly "still loading" message
+/// instead of blocking the UI thread.
 pub fn lookup_word(word: &str) -> String {
+    preload_dictionary();
     let word_lower = word.to_lowercase();
     let stripped = word_lower
         .chars()
         .filter(|c| c.is_alphanumeric() || *c == '-')
         .collect::<String>();
 
-    if let Some(dict) = get_dictionary() {
-        // Exact match on lowercased word.
-        if let Some(def) = dict.get(&word_lower) {
-            return format!(
-                "{}\n\nfound: {}\n{}",
-                def.headword, def.headword, def.definition
-            );
-        }
-
-        // Retry with punctuation stripped.
-        if stripped != word_lower {
-            if let Some(def) = dict.get(&stripped) {
+    match DICTIONARY.get() {
+        Some(Some(dict)) => {
+            // Exact match on lowercased word.
+            if let Some(def) = dict.get(&word_lower) {
                 return format!(
                     "{}\n\nfound: {}\n{}",
                     def.headword, def.headword, def.definition
                 );
             }
+
+            // Retry with punctuation stripped.
+            if stripped != word_lower {
+                if let Some(def) = dict.get(&stripped) {
+                    return format!(
+                        "{}\n\nfound: {}\n{}",
+                        def.headword, def.headword, def.definition
+                    );
+                }
+            }
+
+            // No exact match — provide suggestions.
+            suggest_word(&word_lower, dict)
         }
-
-        // No exact match — provide suggestions.
-        return suggest_word(&word_lower, dict);
+        Some(None) => format!("Dictionary not available: {word_lower}"),
+        None => String::from("Dictionary is still loading — try again in a moment."),
     }
-
-    format!("Dictionary not available: {word_lower}")
 }
 
 /// Generates deterministic suggestions for a misspelled word.
@@ -220,6 +242,13 @@ mod tests {
 
     #[test]
     fn lookup_is_deterministic() {
+        // Allow the lazy background load to settle before asserting.
+        for _ in 0..200 {
+            if DICTIONARY.get().is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
         let r1 = lookup_word("zzzzzzzzz");
         let r2 = lookup_word("zzzzzzzzz");
         assert_eq!(r1, r2, "suggestions must be deterministic");

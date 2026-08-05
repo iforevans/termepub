@@ -8,8 +8,15 @@
 /// ```
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
-fn fixture_epub() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test_colors.epub")
+mod support;
+
+/// Builds a fresh EPUB from the tracked fixture tree so these ignored
+/// tests work on a clean checkout (root-level `.epub` files are not
+/// tracked). The `TempDir` must stay alive for the test's duration.
+fn fixture_epub() -> (tempfile::TempDir, std::path::PathBuf) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let path = support::build_epub(tmp.path(), "pty_fixture", "styles");
+    (tmp, path)
 }
 
 fn binary_path() -> std::path::PathBuf {
@@ -19,6 +26,7 @@ fn binary_path() -> std::path::PathBuf {
 #[ignore = "requires PTY and compiled binary"]
 #[test]
 fn pty_basic_startup() {
+    let (_tmp, epub) = fixture_epub();
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -30,7 +38,7 @@ fn pty_basic_startup() {
         .expect("openpty");
 
     let mut cmd = CommandBuilder::new(binary_path());
-    cmd.arg(fixture_epub());
+    cmd.arg(epub);
 
     let mut child = pair.slave.spawn_command(cmd).expect("spawn");
 
@@ -40,7 +48,7 @@ fn pty_basic_startup() {
     let mut buf = [0u8; 8192];
     let n = reader.read(&mut buf).expect("read");
 
-    let output = std::str::from_utf8(&buf[..n]).expect("utf8");
+    let output = String::from_utf8_lossy(&buf[..n]);
     assert!(
         !output.trim().is_empty(),
         "should have non-blank output on startup"
@@ -81,6 +89,7 @@ fn pty_resize_60x28_to_110x36() {
 }
 
 fn pty_resize_test(init_cols: u16, init_rows: u16, new_cols: u16, new_rows: u16) {
+    let (_tmp, epub) = fixture_epub();
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -92,7 +101,7 @@ fn pty_resize_test(init_cols: u16, init_rows: u16, new_cols: u16, new_rows: u16)
         .expect("openpty");
 
     let mut cmd = CommandBuilder::new(binary_path());
-    cmd.arg(fixture_epub());
+    cmd.arg(epub);
 
     let mut child = pair.slave.spawn_command(cmd).expect("spawn");
 
@@ -101,7 +110,7 @@ fn pty_resize_test(init_cols: u16, init_rows: u16, new_cols: u16, new_rows: u16)
     let mut reader = pair.master.try_clone_reader().expect("clone reader");
     let mut buf = [0u8; 8192];
     let n = reader.read(&mut buf).expect("read");
-    let _initial_output = std::str::from_utf8(&buf[..n]).expect("utf8");
+    let _initial_output = String::from_utf8_lossy(&buf[..n]);
 
     pair.master
         .resize(PtySize {
@@ -115,7 +124,7 @@ fn pty_resize_test(init_cols: u16, init_rows: u16, new_cols: u16, new_rows: u16)
     std::thread::sleep(std::time::Duration::from_millis(800));
 
     let n2 = reader.read(&mut buf).expect("read after resize");
-    let _after_resize = std::str::from_utf8(&buf[..n2]).expect("utf8");
+    let _after_resize = String::from_utf8_lossy(&buf[..n2]);
 
     assert!(
         n2 > 0,

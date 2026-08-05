@@ -215,9 +215,11 @@ fn draw_toc(frame: &mut Frame, app: &App) {
     // TOC entries
     if let Some(ref book) = app.book {
         let toc = book.toc();
+        let view_height = chunks[1].height as usize;
+        let scroll = toc_scroll(app.toc_index, view_height);
         let mut lines: Vec<Line> = Vec::new();
 
-        for (i, entry) in toc.iter().enumerate() {
+        for (i, entry) in toc.iter().enumerate().skip(scroll).take(view_height) {
             let prefix = if i == app.toc_index { "> " } else { "  " };
             let line = Line::from(vec![Span::styled(
                 format!("{}{}", prefix, entry.title),
@@ -311,7 +313,7 @@ fn draw_help(frame: &mut Frame, app: &App) {
         "  j/Down    Navigate down",
         "  k/Up      Navigate up",
         "  Enter     Open file/book",
-        "  / or s    Filter entries",
+        "  / or s    Filter entries (type to filter, Enter done, Esc clear)",
         "  Esc/Ctrl-c Close",
         "",
         "Press Esc or q to close this help.",
@@ -467,4 +469,31 @@ fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
     Rect::new(x, y, w, h)
+}
+
+/// Computes the scroll offset that keeps `index` visible in a view of
+/// `view_height` rows, pinning the selection to the bottom once it
+/// overflows the view.
+fn toc_scroll(index: usize, view_height: usize) -> usize {
+    if view_height > 0 && index >= view_height {
+        index - view_height + 1
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::toc_scroll;
+
+    #[test]
+    fn toc_scroll_keeps_selection_visible() {
+        assert_eq!(toc_scroll(0, 20), 0);
+        assert_eq!(toc_scroll(10, 20), 0);
+        assert_eq!(toc_scroll(20, 20), 1);
+        assert_eq!(toc_scroll(50, 20), 31);
+        assert_eq!(toc_scroll(100, 5), 96);
+        // Degenerate tiny view must not panic.
+        assert_eq!(toc_scroll(7, 0), 0);
+    }
 }
