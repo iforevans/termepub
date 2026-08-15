@@ -34,7 +34,6 @@ Thumbs.db
 # Test artifacts (not fixture sources)
 *.bak
 ecdict_index.json
-ecdict_index.json
 
 # EPUB books (local test copies, not source)
 *.epub

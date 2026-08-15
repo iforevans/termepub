@@ -109,10 +109,7 @@ fn draw_body(frame: &mut Frame, app: &App, area: Rect) {
     for line_segs in current_page {
         let spans: Vec<Span> = line_segs
             .iter()
-            .map(|seg| {
-                let style = style_for_segment(seg, &app.theme);
-                Span::styled(seg.text.clone(), style)
-            })
+            .map(|seg| Span::styled(seg.text.clone(), style_for_segment(seg, &app.theme)))
             .collect();
 
         // If no spans (empty line), add a single empty span
@@ -484,7 +481,19 @@ fn toc_scroll(index: usize, view_height: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use super::super::theme::{style_for_segment, Theme};
     use super::toc_scroll;
+    use crate::StyledSegment;
+    use crate::TextStyle;
+    use ratatui::style::Modifier;
+
+    fn styled(style: TextStyle) -> StyledSegment {
+        StyledSegment {
+            text: "hello".into(),
+            style,
+            is_heading: false,
+        }
+    }
 
     #[test]
     fn toc_scroll_keeps_selection_visible() {
@@ -495,5 +504,38 @@ mod tests {
         assert_eq!(toc_scroll(100, 5), 96);
         // Degenerate tiny view must not panic.
         assert_eq!(toc_scroll(7, 0), 0);
+    }
+
+    #[test]
+    fn italic_style_maps_to_italic_modifier() {
+        let s = TextStyle {
+            italic: true,
+            ..Default::default()
+        };
+        let style = style_for_segment(&styled(s), &Theme::Dark);
+        assert!(
+            style.add_modifier.contains(Modifier::ITALIC),
+            "italic must set ITALIC"
+        );
+    }
+
+    #[test]
+    fn non_italic_segment_has_no_italic_or_strike() {
+        let style = style_for_segment(&styled(TextStyle::default()), &Theme::Dark);
+        assert!(!style.add_modifier.contains(Modifier::ITALIC));
+        assert!(!style.add_modifier.contains(Modifier::CROSSED_OUT));
+    }
+
+    #[test]
+    fn strike_style_maps_to_crossed_out_modifier() {
+        let s = TextStyle {
+            strike: true,
+            ..Default::default()
+        };
+        let style = style_for_segment(&styled(s), &Theme::Dark);
+        assert!(
+            style.add_modifier.contains(Modifier::CROSSED_OUT),
+            "strike must set CROSSED_OUT"
+        );
     }
 }

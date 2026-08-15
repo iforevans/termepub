@@ -76,8 +76,14 @@ pub fn style_for_segment(seg: &StyledSegment, theme: &Theme) -> Style {
     if seg.style.bold {
         mods |= Modifier::BOLD;
     }
+    if seg.style.italic {
+        mods |= Modifier::ITALIC;
+    }
     if seg.style.underline {
         mods |= Modifier::UNDERLINED;
+    }
+    if seg.style.strike {
+        mods |= Modifier::CROSSED_OUT;
     }
 
     let fg = if seg.is_heading {

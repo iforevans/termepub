@@ -13,7 +13,7 @@ A terminal EPUB reader with a clean, keyboard-driven interface. Written in Rust 
 - **Bookmarks:** Save and restore reading position
 - **Themes:** Four themes — Dark, Light, Solarized Dark, Solarized Light
 - **Progress Tracking:** Overall book pagination with percentage
-- **CSS Styling:** Inline CSS support (bold, underline, colors)
+- **CSS Styling:** Inline CSS support (bold, underline, italic, strikethrough, colors)
 - **Justified Text:** Toggle justified text alignment
 - **Dictionary Lookup:** 160K+ word dictionary (ECDICT), loaded in the background so the first lookup never freezes the UI
 - **Responsive Layout:** Terminal resize support with automatic re-pagination
@@ -80,13 +80,13 @@ The reader supports inline CSS styling from EPUB files:
 **Currently rendered:**
 - **Bold text:** `<b>`, `<strong>`, `font-weight: bold`
 - **Underline:** `<u>`, `text-decoration: underline`
+- **Italic:** `<i>`, `<em>`, `font-style: italic` (via ANSI escapes; visible in most modern terminals)
+- **Strikethrough:** `<s>`, `<strike>`, `<del>`, `text-decoration: line-through`
 - **Colors:**
   - Hex: `color: #rrggbb` or `color: #rgb`
   - RGB: `color: rgb(r,g,b)`
   - Named colors (red, blue, green, etc.)
   - Colors adapt to current theme (dark/light mode)
-
-**Note:** Italic and line-through are parsed from HTML but may not render visibly in all terminal emulators.
 
 ## Requirements
 
