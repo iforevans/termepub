@@ -1,5 +1,20 @@
 # Release Notes
 
+## termepub v2.3.1 — 2026-08-15
+
+Small polish release from the v2.3.0 code review.
+
+### What Changed
+
+- **Italic and strikethrough now render** — both were parsed from HTML (`<i>`, `<em>`, `<s>`, `<strike>`, `<del>`, `font-style: italic`, `text-decoration: line-through`) but silently dropped by the renderer. They now map to ratatui's `Modifier::ITALIC` and `Modifier::CROSSED_OUT` (SGR 3 and SGR 9 via crossterm).
+- **Dictionary no longer tracked in git** — the 21 MB `ecdict_index.json` was committed by accident (and gitignored at the same time). It is untracked now; the loader finds it in `~/.config/termepub/` first, with the binary's directory as fallback, so nothing changes for users who have it installed.
+
+### Technical Details
+
+- Test coverage: 85 passing tests locally (4 new unit tests for the italic/strikethrough style mapping).
+
+---
+
 ## termepub v2.3.0 — 2026-08-05
 
 Bug-fix and UX release.

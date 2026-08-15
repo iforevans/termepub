@@ -2,7 +2,7 @@
 
 A terminal EPUB reader with a clean, keyboard-driven interface. Written in Rust for speed, reliability, and zero runtime dependencies.
 
-**Version:** 2.3.0 (2026-08-05)
+**Version:** 2.3.1 (2026-08-15)
 
 ## Features
 
