@@ -258,11 +258,22 @@ impl StateStore {
     }
 
     /// Saves state atomically using a sibling temp file and rename.
+    ///
+    /// The temp file name is suffixed with the PID so concurrently running
+    /// instances do not clobber each other's in-progress write before the
+    /// rename.
     pub fn save(&self) -> Result<(), Error> {
         let content = serde_json::to_string_pretty(&self.data)
             .map_err(|e| Error::Message(format!("serialization failed: {e}")))?;
 
-        let tmp_path = self.path.with_extension("json.tmp");
+        let tmp_path = self.path.with_file_name(format!(
+            "{}.{}.tmp",
+            self.path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("state"),
+            std::process::id()
+        ));
         let mut file = fs::File::create(&tmp_path).map_err(|e| Error::io_path(&tmp_path, e))?;
         file.write_all(content.as_bytes())
             .map_err(|e| Error::io_path(&tmp_path, e))?;

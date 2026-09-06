@@ -213,3 +213,69 @@ fn unicode_sanitization_preserves_printable_unicode() {
     );
     assert!(combined.contains("中文"), "should preserve CJK: {combined}");
 }
+
+#[test]
+fn valid_hex_colors_are_parsed() {
+    // 6-digit hex.
+    let seg = termepub::extract_html("<span style=\"color:#112233\">x</span>", true)
+        .into_iter()
+        .find(|s| s.text == "x")
+        .unwrap();
+    assert_eq!(seg.style.foreground, Some([0x11, 0x22, 0x33]));
+
+    // 3-digit shorthand expands correctly.
+    let seg = termepub::extract_html("<span style=\"color:#abc\">x</span>", true)
+        .into_iter()
+        .find(|s| s.text == "x")
+        .unwrap();
+    assert_eq!(seg.style.foreground, Some([0xaa, 0xbb, 0xcc]));
+}
+
+#[test]
+fn malformed_hex_colors_are_rejected() {
+    // Regression: a non-hex digit in a 3-digit shorthand (e.g. #a1g) used to
+    // be cast to a char and parsed as a bogus byte instead of being rejected.
+    for value in ["#a1g", "#12g456", "#12", "#12345", "#gggggg"] {
+        let segments =
+            termepub::extract_html(&format!("<span style=\"color:{value}\">x</span>"), true);
+        let seg = segments.into_iter().find(|s| s.text == "x").unwrap();
+        assert_eq!(
+            seg.style.foreground, None,
+            "malformed color {value:?} should be rejected"
+        );
+    }
+}
+
+#[test]
+fn book_colors_adapt_to_theme() {
+    use ratatui::style::Color;
+
+    // A near-black book color is unreadable on a dark theme and must be
+    // flipped to a light color; on a light theme it stays dark.
+    let seg = termepub::StyledSegment {
+        text: "x".into(),
+        style: termepub::TextStyle {
+            foreground: Some([10, 10, 10]),
+            ..Default::default()
+        },
+        is_heading: false,
+    };
+
+    let dark_style =
+        termepub::ui::theme::style_for_segment(&seg, &termepub::ui::theme::Theme::Dark);
+    let light_style =
+        termepub::ui::theme::style_for_segment(&seg, &termepub::ui::theme::Theme::Light);
+
+    // Dark theme flips (10,10,10) -> (245,245,245).
+    assert_eq!(
+        dark_style.fg,
+        Some(Color::Rgb(245, 245, 245)),
+        "dark color on dark theme should be lightened"
+    );
+    // Light theme keeps the dark color as-is.
+    assert_eq!(
+        light_style.fg,
+        Some(Color::Rgb(10, 10, 10)),
+        "dark color on light theme should stay dark"
+    );
+}

@@ -107,6 +107,20 @@ fn epub2_ncx_loads_toc() {
 }
 
 #[test]
+fn self_closing_metadata_tag_does_not_break_author() {
+    // Regression: a self-closing metadata element (e.g. <dc:publisher/>)
+    // emitted an `Empty` event that was previously ignored, which left the
+    // current-meta-tag tracking desynced and could drop the author.  The
+    // creator must still be captured and the self-closing tag must not
+    // produce a spurious value.
+    let tmp = TempDir::new().unwrap();
+    let path = build_epub(tmp.path(), "selfclosing", "epub2_selfclosing");
+    let book = termepub::EpubBook::open(&path, true).expect("should open");
+    assert_eq!(book.title(), "Self-Closing Metadata Book");
+    assert_eq!(book.author(), "Self Closing Author");
+}
+
+#[test]
 fn epub3_nav_loads_toc() {
     let tmp = TempDir::new().unwrap();
     let path = build_epub(tmp.path(), "epub3", "epub3_nav");
@@ -118,6 +132,25 @@ fn epub3_nav_loads_toc() {
         "EPUB 3 nav should produce TOC entries"
     );
     assert_eq!(book.chapter_count(), 2);
+}
+
+#[test]
+fn unresolved_toc_entry_has_none_spine_index() {
+    // Regression: a TOC entry whose href does not resolve to a spine item
+    // used to silently fall back to spine_index 0, sending the reader to
+    // the wrong chapter.  It must now be `None` so the UI skips it.
+    let tmp = TempDir::new().unwrap();
+    let path = build_epub(tmp.path(), "unresolved", "epub2_unresolved");
+    let book = termepub::EpubBook::open(&path, true).expect("should open");
+    let toc = book.toc();
+    assert_eq!(toc.len(), 2, "expected two TOC entries: {toc:?}");
+    // First entry resolves to the only spine item.
+    assert_eq!(toc[0].spine_index, Some(0), "first entry should resolve");
+    // Second entry points at a missing member -> must be None, not 0.
+    assert_eq!(
+        toc[1].spine_index, None,
+        "unresolved entry must be None, not silently chapter 0"
+    );
 }
 
 #[test]

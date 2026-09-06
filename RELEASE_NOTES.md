@@ -1,5 +1,31 @@
 # Release Notes
 
+## termepub v2.4.0 — 2026-09-06
+
+Correctness and robustness release from a full code review. No new features; a series of bug fixes, edge-case hardening, and dead-code removal.
+
+### What Changed
+
+- **File picker no longer traps you** — with no book open (the picker is the home screen), `Esc` and `q` now raise the quit confirmation instead of doing nothing. Previously there was no way out but killing the process.
+- **Justification can no longer panic** — a justified line that wraps to a single word has zero gaps to distribute across; the old code divided by zero (panic in release, integer-wrap in debug). Single-word lines are now joined plainly.
+- **TOC jumps to the right chapter** — a table-of-contents entry whose link could not be resolved to a spine item used to silently jump to chapter 0. It is now marked unresolved and skipped, so the TOC no longer sends you to the wrong place.
+- **Search finds phrases across any number of pages** — the old search only checked within-page and two-page windows, so a phrase spanning three page boundaries was never found. Search is now a single pass over the whole book with correct page mapping.
+- **Book colors adapt to the theme** — a near-black color in a book's CSS is now lightened on dark themes (and a near-white color darkened on light themes) so text stays readable, matching the behavior the README always claimed.
+- **Malformed CSS colors are rejected** — a 3-digit hex shorthand with a non-hex digit (e.g. `#a1g`) no longer produces a bogus color; it is ignored.
+- **Self-closing metadata tags in the OPF** — a `<dc:creator/>`-style self-closing element no longer desyncs the package parser or drops the author.
+- **`q` cancels the quit prompt** — pressing `q` on the "Quit? (y/n)" popup now cancels it (it was a no-op before).
+- **Atomic state writes are concurrency-safe** — the temp file is now PID-suffixed so two running instances don't clobber each other's in-progress write.
+- **Dead code removed** — the unused `ui/modal` module and several unused helpers (`Archive::read_binary`/`len`/`is_empty`, `width::{graphemes, grapheme_at, grapheme_byte_offset, split_into_words}`, `Theme::iter`) are gone.
+
+### Technical Details
+
+- `TocEntry::spine_index` is now `Option<usize>`; unresolved TOC entries are `None` and skipped by the UI.
+- `EpubBook::chapters()` returns `&[Vec<StyledSegment>]` (slice, not `&Vec`).
+- Body rendering no longer double-wraps text that pagination already sized to the terminal width.
+- Test coverage: 96 passing tests locally (plus 6 PTY integration tests that run with `--ignored`), including regression tests for the picker escape, justification single-word lines, unresolved TOC entries, multi-page search, color adaptation, and PID-suffixed temp files.
+
+---
+
 ## termepub v2.3.1 — 2026-08-15
 
 Small polish release from the v2.3.0 code review.

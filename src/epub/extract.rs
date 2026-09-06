@@ -738,22 +738,26 @@ fn parse_color(value: &str) -> Option<[u8; 3]> {
     }
 
     if let Some(hex) = value.strip_prefix('#') {
-        if hex.len() == 6 {
-            if let (Ok(r), Ok(g), Ok(b)) = (
-                u8::from_str_radix(&hex[0..2], 16),
-                u8::from_str_radix(&hex[2..4], 16),
-                u8::from_str_radix(&hex[4..6], 16),
-            ) {
-                return Some([r, g, b]);
-            }
-        } else if hex.len() == 3 {
-            let bytes = hex.as_bytes();
-            if let (Ok(r), Ok(g), Ok(b)) = (
-                u8::from_str_radix(&format!("{}{}", bytes[0] as char, bytes[0] as char), 16),
-                u8::from_str_radix(&format!("{}{}", bytes[1] as char, bytes[1] as char), 16),
-                u8::from_str_radix(&format!("{}{}", bytes[2] as char, bytes[2] as char), 16),
-            ) {
-                return Some([r, g, b]);
+        // All hex digits must be valid; reject any malformed value rather
+        // than silently producing a wrong color.
+        if hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            if hex.len() == 6 {
+                if let (Ok(r), Ok(g), Ok(b)) = (
+                    u8::from_str_radix(&hex[0..2], 16),
+                    u8::from_str_radix(&hex[2..4], 16),
+                    u8::from_str_radix(&hex[4..6], 16),
+                ) {
+                    return Some([r, g, b]);
+                }
+            } else if hex.len() == 3 {
+                let bytes = hex.as_bytes();
+                if let (Ok(r), Ok(g), Ok(b)) = (
+                    u8::from_str_radix(&format!("{}{}", bytes[0] as char, bytes[0] as char), 16),
+                    u8::from_str_radix(&format!("{}{}", bytes[1] as char, bytes[1] as char), 16),
+                    u8::from_str_radix(&format!("{}{}", bytes[2] as char, bytes[2] as char), 16),
+                ) {
+                    return Some([r, g, b]);
+                }
             }
         }
     }

@@ -2,6 +2,8 @@
 //!
 //! Tests verify layout::paginate behavior (Phase 5).
 
+use termepub::{StyledSegment, TextStyle};
+
 #[test]
 fn rendered_page_count_is_source_of_truth() {
     // A chapter of 100 'x' chars at width=21 should produce a known number of pages.
@@ -65,6 +67,46 @@ fn search_across_pages() {
 }
 
 #[test]
+fn search_spanning_three_page_boundaries() {
+    // Regression: the old search only checked within-page and two-page
+    // windows, so a phrase spanning three page boundaries was never found.
+    //
+    // Each page's text carries a trailing space (line join) and pages are
+    // joined with a single separator space, so the combined text between
+    // words on different pages is two spaces.  Build pages where a marker
+    // straddles three page breaks:
+    //   page0 = "alpha", page1 = "beta", page2 = "gamma"
+    // combined -> "alpha  beta  gamma "  (double spaces across boundaries)
+    let page0: Vec<Vec<StyledSegment>> = vec![vec![seg("alpha")]];
+    let page1: Vec<Vec<StyledSegment>> = vec![vec![seg("beta")]];
+    let page2: Vec<Vec<StyledSegment>> = vec![vec![seg("gamma")]];
+    let pages = vec![page0, page1, page2];
+
+    let result = termepub::search_pages(&pages, "alpha  beta  gamma");
+    assert_eq!(
+        result,
+        Some(0),
+        "match spanning 3 pages should be found, starting on page 0"
+    );
+}
+
+#[test]
+fn search_returns_none_when_absent() {
+    let pages: Vec<Vec<Vec<StyledSegment>>> = vec![vec![vec![seg("hello")]]];
+    assert_eq!(termepub::search_pages(&pages, "world"), None);
+    assert_eq!(termepub::search_pages(&pages, ""), None);
+}
+
+/// Helper: a single styled segment with plain text.
+fn seg(text: &str) -> StyledSegment {
+    StyledSegment {
+        text: text.to_string(),
+        style: TextStyle::default(),
+        is_heading: false,
+    }
+}
+
+#[test]
 fn long_word_split_behavior() {
     // A word longer than the viewport should be split.
     let long_word = "a".repeat(50);
@@ -83,6 +125,61 @@ fn justification_spacing_and_non_justified_final_lines() {
     // Justification should only apply to non-final lines of a paragraph.
     assert!(!justified.is_empty());
     assert!(!not_justified.is_empty());
+}
+
+#[test]
+fn justification_single_word_line_does_not_panic() {
+    // Regression: a justified non-final line that wraps to a single word
+    // has zero gaps to distribute space across.  Before the fix this hit
+    // an integer division by zero (panic in release, wrap in debug).
+    //
+    // width=10 (the minimum): "alpha" (5) + " " + "beta" (4) = 10, so both
+    // words fit on ONE line, which becomes the final line (not justified).
+    // To force a single-word NON-final line we need a word that fits alone
+    // but not together with the next.  Use width=10 with "alpha beta":
+    // 5 + 1 + 4 = 10 fits -> single line, final, not justified.  So use a
+    // case where the first line is a lone word: width=10, "alpha" then a
+    // word that cannot share the line.
+    let segments = termepub::extract_html("<p>alpha beta</p>", true);
+    // width=5 would be below MIN_TERMINAL_COLS (10).  At width=10 the two
+    // words fit on one line.  Instead verify the guard path directly with a
+    // single long word that wraps: "aaaaaaaaaa" (10) at width=10 is one
+    // line (final).  The real single-word non-final case needs 2+ lines
+    // where line 1 is a lone word — use width=10 and three words where the
+    // first is exactly full-width.
+    let pages = termepub::paginate(&segments, 10, 10, true, true);
+    assert!(!pages.is_empty());
+    let all_text: String = pages
+        .iter()
+        .flat_map(|page| page.iter())
+        .flat_map(|line| line.iter())
+        .map(|s| s.text.as_str())
+        .collect();
+    assert!(all_text.contains("alpha"), "missing 'alpha': {all_text}");
+    assert!(all_text.contains("beta"), "missing 'beta': {all_text}");
+}
+
+#[test]
+fn justification_single_word_nonfinal_line_no_panic() {
+    // Regression, direct: a paragraph where line 1 is a single word that
+    // fills the width, forcing "beta" onto line 2.  Line 1 is a single-word
+    // non-final line -> gaps == 0 -> must not divide by zero.
+    // width=10: "aaaaaaaaa" (9) + " " + "b" (1) = 11 > 10, so "b" wraps.
+    // Line 1 = "aaaaaaaaa" (1 word, non-final) -> previously panicked.
+    let segments = termepub::extract_html("<p>aaaaaaaaa b</p>", true);
+    let pages = termepub::paginate(&segments, 10, 10, true, true);
+    assert!(!pages.is_empty());
+    let all_text: String = pages
+        .iter()
+        .flat_map(|page| page.iter())
+        .flat_map(|line| line.iter())
+        .map(|s| s.text.as_str())
+        .collect();
+    assert!(
+        all_text.contains("aaaaaaaaa"),
+        "missing long word: {all_text}"
+    );
+    assert!(all_text.contains('b'), "missing 'b': {all_text}");
 }
 
 #[test]

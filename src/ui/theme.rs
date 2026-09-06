@@ -29,17 +29,6 @@ impl Theme {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn iter() -> impl Iterator<Item = Theme> {
-        [
-            Theme::Dark,
-            Theme::Light,
-            Theme::SolarizedDark,
-            Theme::SolarizedLight,
-        ]
-        .into_iter()
-    }
-
     pub fn next_theme(&self) -> Theme {
         match self {
             Theme::Dark => Theme::Light,
@@ -100,6 +89,27 @@ pub fn style_for_segment(seg: &StyledSegment, theme: &Theme) -> Style {
         .add_modifier(mods)
 }
 
-fn map_rgb_to_terminal(r: u8, g: u8, b: u8, _theme: &Theme) -> Color {
-    Color::Rgb(r, g, b)
+/// Maps a book-specified color to something visible on the active theme.
+///
+/// Book CSS colors are authored against an unknown (usually light) page
+/// background.  On a dark theme a near-black color would be unreadable, and
+/// on a light theme a near-white color would vanish.  We therefore flip
+/// colors whose relative luminance is on the "wrong" side for the theme:
+/// dark colors are lightened on dark themes, light colors are darkened on
+/// light themes.  Mid-tone colors pass through unchanged.
+fn map_rgb_to_terminal(r: u8, g: u8, b: u8, theme: &Theme) -> Color {
+    // ITU-R BT.709 relative luminance, scaled to 0..=255.
+    let luminance = (0.2126 * f64::from(r) + 0.7152 * f64::from(g) + 0.0722 * f64::from(b)) as u16;
+
+    let is_dark_theme = matches!(theme, Theme::Dark | Theme::SolarizedDark);
+
+    if is_dark_theme && luminance < 128 {
+        // Dark text on a dark page: flip to a light color.
+        Color::Rgb(255 - r, 255 - g, 255 - b)
+    } else if !is_dark_theme && luminance > 128 {
+        // Light text on a light page: flip to a dark color.
+        Color::Rgb(255 - r, 255 - g, 255 - b)
+    } else {
+        Color::Rgb(r, g, b)
+    }
 }

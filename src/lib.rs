@@ -217,7 +217,7 @@ impl EpubBook {
     }
 
     /// Returns the styled segments for each chapter in the spine.
-    pub fn chapters(&self) -> &Vec<Vec<StyledSegment>> {
+    pub fn chapters(&self) -> &[Vec<StyledSegment>] {
         &self.chapters
     }
 
@@ -254,7 +254,10 @@ pub fn preload_dictionary() {
 pub struct TocEntry {
     pub title: String,
     pub href: String,
-    pub spine_index: usize,
+    /// Resolved spine position, if the href could be matched to a spine
+    /// item.  `None` means the entry could not be resolved and the UI
+    /// should skip it rather than jumping to an arbitrary chapter.
+    pub spine_index: Option<usize>,
 }
 
 /// A segment of text with associated style information.

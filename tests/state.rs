@@ -142,3 +142,35 @@ fn atomic_write_uses_rename() {
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
     assert!(parsed.is_object());
 }
+
+#[test]
+fn temp_file_is_pid_suffixed_and_cleaned_up() {
+    // Regression: the temp file was a fixed `state.json.tmp`, so two
+    // concurrent instances could clobber each other.  It must now be
+    // PID-suffixed, and the rename must leave no temp file behind.
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().join("state.json");
+
+    let mut store = termepub::StateStore::open(path.clone()).unwrap();
+    store.set_state_for_book("test", 1, 2);
+    store.save().unwrap();
+
+    // The final file exists and is valid.
+    assert!(path.exists());
+
+    // No leftover temp file for this PID.
+    let pid_tmp = tmp.path().join(format!("state.{}.tmp", std::process::id()));
+    assert!(!pid_tmp.exists(), "temp file should be renamed away");
+
+    // The directory holds only state.json (no *.tmp leftovers at all).
+    let leftovers: Vec<_> = fs::read_dir(tmp.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name())
+        .filter(|n| n.to_string_lossy().ends_with(".tmp"))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "no temp files should remain: {leftovers:?}"
+    );
+}

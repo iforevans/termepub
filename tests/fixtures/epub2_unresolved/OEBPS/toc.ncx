@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<!DOCTYPE ncx PUBLIC "-//NISO//DTD NCX 2005-1//EN" "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd">
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/">
+  <head>
+    <meta name="dtb:uid" content="test-unresolved"/>
+  </head>
+  <docTitle><text>Unresolved TOC Test Book</text></docTitle>
+  <navMap>
+    <navPoint id="np1" playOrder="1">
+      <navLabel><text>Chapter 1</text></navLabel>
+      <content src="chapter1.xhtml"/>
+    </navPoint>
+    <navPoint id="np2" playOrder="2">
+      <navLabel><text>Missing Chapter</text></navLabel>
+      <content src="does-not-exist.xhtml"/>
+    </navPoint>
+  </navMap>
+</ncx>

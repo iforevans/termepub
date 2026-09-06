@@ -210,6 +210,10 @@ fn wrap_paragraph(
         .into_iter()
         .enumerate()
         .map(|(line_idx, line_words)| {
+            // Only justify non-final lines with two or more words.  A
+            // single-word line has no gaps to distribute space across, so
+            // it must fall through to plain joining (justifying it would
+            // divide by zero gaps).
             if justify && line_idx + 1 < is_final_line && line_words.len() > 1 {
                 justify_line_segments(&line_words, max_width)
             } else {
@@ -246,7 +250,9 @@ fn justify_line_segments(
     let gaps = line_words.len().saturating_sub(1);
     let total_space = max_width.saturating_sub(content_width);
 
-    if total_space <= gaps {
+    // No gaps to distribute (single word) or nothing to distribute: fall
+    // back to plain joining.  Guards against integer division by zero.
+    if gaps == 0 || total_space <= gaps {
         let text: String = line_words
             .iter()
             .map(|(w, _, _)| w.as_str())
@@ -344,7 +350,13 @@ fn wrap_preformatted(
 }
 
 /// Searches rendered pages for a phrase, including matches spanning lines
-/// and page boundaries.
+/// and page boundaries (any number of boundaries).
+///
+/// Concatenates all page text with a single-space separator, finds the first
+/// match, and maps its position back to the page where the match begins.
+/// The single-space separator preserves the original line-joining behavior
+/// and keeps the result consistent for within-page, two-page, and
+/// multi-page-spanning matches alike.
 pub fn search_pages(pages: &[Vec<Vec<StyledSegment>>], query: &str) -> Option<usize> {
     if query.is_empty() || pages.is_empty() {
         return None;
@@ -352,7 +364,8 @@ pub fn search_pages(pages: &[Vec<Vec<StyledSegment>>], query: &str) -> Option<us
 
     let query_lower = query.to_lowercase();
 
-    // Build concatenated text per page.
+    // Build concatenated text per page and the page-start byte offsets in
+    // the combined string.
     let mut page_texts: Vec<String> = Vec::new();
     for page in pages {
         let mut page_text = String::new();
@@ -365,34 +378,19 @@ pub fn search_pages(pages: &[Vec<Vec<StyledSegment>>], query: &str) -> Option<us
         page_texts.push(page_text.to_lowercase());
     }
 
-    // Check within individual pages first.
-    for (page_idx, page_text) in page_texts.iter().enumerate() {
-        if page_text.contains(&query_lower) {
-            return Some(page_idx);
+    // Byte offset in the combined string where each page's text begins.
+    let mut page_starts: Vec<usize> = Vec::with_capacity(page_texts.len());
+    let mut combined = String::new();
+    for (i, pt) in page_texts.iter().enumerate() {
+        page_starts.push(combined.len());
+        combined.push_str(pt);
+        if i + 1 < page_texts.len() {
+            combined.push(' ');
         }
     }
 
-    // Check across adjacent page boundaries.
-    for page_idx in 0..page_texts.len().saturating_sub(1) {
-        let combined = format!("{} {}", page_texts[page_idx], page_texts[page_idx + 1]);
-        if combined.contains(&query_lower) {
-            return Some(page_idx);
-        }
-    }
+    let match_pos = combined.find(&query_lower)?;
 
-    // Full cross-page search.
-    let full_text: String = page_texts.join(" ");
-    if full_text.contains(&query_lower) {
-        if let Some(match_pos) = full_text.find(&query_lower) {
-            let mut offset = 0;
-            for (pi, pt) in page_texts.iter().enumerate() {
-                if match_pos < offset + pt.len() {
-                    return Some(pi);
-                }
-                offset += pt.len();
-            }
-        }
-    }
-
-    None
+    // The match begins on the last page whose start offset is <= match_pos.
+    page_starts.iter().rposition(|&start| start <= match_pos)
 }

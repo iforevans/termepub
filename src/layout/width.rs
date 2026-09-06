@@ -8,24 +8,6 @@ pub fn text_width(s: &str) -> usize {
     s.width()
 }
 
-/// Splits a string into grapheme clusters, returning them as `&str` slices.
-pub fn graphemes(s: &str) -> Vec<&str> {
-    s.graphemes(true).collect()
-}
-
-/// Returns the grapheme cluster at a given grapheme index, or `None`.
-pub fn grapheme_at(s: &str, idx: usize) -> Option<&str> {
-    s.graphemes(true).nth(idx)
-}
-
-/// Returns the byte offset after `n` grapheme clusters.
-pub fn grapheme_byte_offset(s: &str, n: usize) -> usize {
-    s.grapheme_indices(true)
-        .nth(n)
-        .map(|(i, _)| i)
-        .unwrap_or(s.len())
-}
-
 /// Splits a string at grapheme boundaries, returning at most `max_width`
 /// cells worth of graphemes in the first element and the remainder in the
 /// second.  Returns `None` if the string fits within `max_width`.
@@ -75,31 +57,4 @@ pub fn split_long_word(word: &str, max_width: usize) -> Option<Vec<String>> {
     } else {
         Some(chunks)
     }
-}
-
-/// Splits a string into words at grapheme-safe whitespace boundaries.
-/// Each word is returned as a `(String, style_index)` where style_index
-/// is unused here (caller handles style per segment).
-pub fn split_into_words(s: &str) -> Vec<String> {
-    let mut words = Vec::new();
-    let mut current = String::new();
-
-    for g in s.graphemes(true) {
-        if g.trim().is_empty() {
-            if !current.is_empty() {
-                words.push(current);
-                current = String::new();
-            }
-            // Separate words with a space marker
-            words.push(String::new());
-        } else {
-            current.push_str(g);
-        }
-    }
-
-    if !current.is_empty() {
-        words.push(current);
-    }
-
-    words
 }

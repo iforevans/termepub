@@ -122,7 +122,12 @@ fn draw_body(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     let text = Text::from(lines);
-    let paragraph = Paragraph::new(text).wrap(Wrap { trim: true });
+    // The lines were already wrapped to the body width during pagination, so
+    // no second wrap is applied here.  Wrapping again would let the paragraph
+    // re-break lines at slightly different points (the body rect can differ
+    // from the paginated width by a cell or two), splitting words
+    // unexpectedly.
+    let paragraph = Paragraph::new(text);
     frame.render_widget(paragraph, area);
 }
 

@@ -130,34 +130,6 @@ impl Archive {
         self.inner.by_name(&path).is_ok()
     }
 
-    /// Returns the number of members in the archive.
-    #[allow(dead_code)]
-    pub fn len(&self) -> usize {
-        self.inner.len()
-    }
-
-    /// Returns true if the archive has no members.
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.inner.len() == 0
-    }
-
-    /// Reads a member as raw bytes (for binary content like fonts).
-    /// Not counted toward aggregate text limits.
-    #[allow(dead_code)]
-    pub fn read_binary(&mut self, name: &str) -> Result<Vec<u8>, Error> {
-        let path = normalize_epub_path(name);
-        let mut content = Vec::new();
-        let mut reader = self
-            .inner
-            .by_name(&path)
-            .map_err(|_| Error::InvalidEpub(format!("member not found: {path}")))?;
-        reader
-            .read_to_end(&mut content)
-            .map_err(|e| Error::InvalidEpub(format!("failed to read \"{path}\": {e}")))?;
-        Ok(content)
-    }
-
     /// Parses `META-INF/encryption.xml` if present, and returns the set of
     /// encrypted URIs.
     pub fn parse_encryption(&mut self) -> Result<Vec<String>, Error> {

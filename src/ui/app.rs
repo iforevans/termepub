@@ -145,10 +145,12 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
-        // Quit is available in every mode except input modes where 'q' is text.
+        // Quit is available in every mode except input modes where 'q' is
+        // text, and except the popup itself, where 'q' cancels the open
+        // confirmation (handled by handle_popup_key).
         let typing_filter = self.mode == Mode::Picker && self.picker_filtering;
         if key.code == KeyCode::Char('q')
-            && !matches!(self.mode, Mode::Dictionary | Mode::Search)
+            && !matches!(self.mode, Mode::Dictionary | Mode::Search | Mode::Popup)
             && !typing_filter
         {
             self.mode = Mode::Popup;
@@ -322,7 +324,12 @@ impl App {
                     let toc = book.toc();
                     if self.toc_index < toc.len() {
                         let entry = &toc[self.toc_index];
-                        self.navigate_chapter(entry.spine_index);
+                        // Skip entries whose href could not be resolved to a
+                        // spine item; jumping to an arbitrary chapter would be
+                        // misleading.
+                        if let Some(spine_index) = entry.spine_index {
+                            self.navigate_chapter(spine_index);
+                        }
                     }
                 }
                 self.mode = Mode::Reader;
@@ -415,16 +422,12 @@ impl App {
             }
             KeyCode::Esc => {
                 self.clear_picker_filter();
-                if self.book.is_some() {
-                    self.mode = Mode::Reader;
-                }
+                self.close_overlay();
                 true
             }
             KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
                 self.clear_picker_filter();
-                if self.book.is_some() {
-                    self.mode = Mode::Reader;
-                }
+                self.close_overlay();
                 true
             }
             KeyCode::Char('s') | KeyCode::Char('/') => {
@@ -442,44 +445,45 @@ impl App {
         self.picker_filter.clear();
     }
 
+    /// Where to return when closing an overlay (picker, popup, …).
+    ///
+    /// If a book is open, go back to the reader.  If no book is open the
+    /// picker is the app's home screen, so closing it means quitting — we
+    /// raise the quit confirmation instead of trapping the user in the
+    /// picker with no way out.
+    fn close_overlay(&mut self) {
+        self.mode = if self.book.is_some() {
+            Mode::Reader
+        } else {
+            self.mode = Mode::Popup;
+            self.popup_message = Some("Quit? (y/n)".into());
+            Mode::Popup
+        };
+    }
+
     fn handle_popup_key(&mut self, key: KeyEvent) -> bool {
+        // Any non-affirmative key (n, q, Esc, Enter, space) dismisses the
+        // popup.  Only 'y' confirms a quit-confirmation popup.
         match key.code {
             KeyCode::Char('y') => {
-                if let Some(ref msg) = self.popup_message {
-                    if msg == "Quit? (y/n)" {
-                        self.should_quit = true;
-                        return true;
-                    }
-                }
-                false
-            }
-            KeyCode::Char('n') | KeyCode::Esc => {
-                if let Some(ref msg) = self.popup_message {
-                    if msg == "Quit? (y/n)" {
-                        self.popup_message = None;
-                        if self.book.is_some() {
-                            self.mode = Mode::Reader;
-                        } else {
-                            self.mode = Mode::Picker;
-                        }
-                        return true;
-                    }
-                }
-                self.popup_message = None;
-                if self.book.is_some() {
-                    self.mode = Mode::Reader;
+                if self
+                    .popup_message
+                    .as_deref()
+                    .is_some_and(|msg| msg == "Quit? (y/n)")
+                {
+                    self.should_quit = true;
+                    true
                 } else {
-                    self.mode = Mode::Picker;
+                    false
                 }
-                true
             }
-            KeyCode::Enter | KeyCode::Char(' ') => {
+            KeyCode::Char('n')
+            | KeyCode::Char('q')
+            | KeyCode::Esc
+            | KeyCode::Enter
+            | KeyCode::Char(' ') => {
                 self.popup_message = None;
-                if self.book.is_some() {
-                    self.mode = Mode::Reader;
-                } else {
-                    self.mode = Mode::Picker;
-                }
+                self.close_overlay();
                 true
             }
             _ => false,
@@ -909,5 +913,58 @@ mod tests {
             !app.is_repeat_safe(key(KeyCode::Char('y'))),
             "destructive keys must not repeat"
         );
+    }
+
+    #[test]
+    fn popup_q_no_book_reopens_quit_confirmation() {
+        // Regression: with no book open, cancelling the quit popup used to
+        // bounce back to the picker, trapping the user with no way to exit.
+        // It must re-raise the quit confirmation instead.
+        let mut app = app();
+        app.mode = Mode::Popup;
+        app.popup_message = Some("Quit? (y/n)".into());
+
+        app.handle_key(key(KeyCode::Char('q')));
+
+        assert!(!app.should_quit, "'q' must not confirm quit");
+        assert_eq!(
+            app.popup_message.as_deref(),
+            Some("Quit? (y/n)"),
+            "no book -> re-raise quit confirmation, don't trap in picker"
+        );
+    }
+
+    #[test]
+    fn picker_esc_with_no_book_offers_quit() {
+        // Regression: ESC in the picker with no book open used to do nothing
+        // (mode stayed Picker, no way out but killing the process).  It must
+        // now raise the quit confirmation.
+        let mut app = app();
+        app.mode = Mode::Picker;
+        app.picker_entries = vec![PickerEntry {
+            name: "book.epub".into(),
+            is_dir: false,
+            is_epub: true,
+        }];
+
+        app.handle_key(key(KeyCode::Esc));
+
+        assert_eq!(
+            app.mode,
+            Mode::Popup,
+            "no book -> ESC should raise quit confirmation"
+        );
+        assert_eq!(app.popup_message.as_deref(), Some("Quit? (y/n)"));
+    }
+
+    #[test]
+    fn popup_y_confirms_quit() {
+        let mut app = app();
+        app.mode = Mode::Popup;
+        app.popup_message = Some("Quit? (y/n)".into());
+
+        app.handle_key(key(KeyCode::Char('y')));
+
+        assert!(app.should_quit, "'y' should confirm quit");
     }
 }

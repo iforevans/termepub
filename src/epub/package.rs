@@ -138,8 +138,14 @@ pub fn parse_package(archive: &mut Archive, opf_path: &str) -> Result<Package, E
             }
             Ok(quick_xml::events::Event::Empty(ref e)) => {
                 let name = local_name(e.name().as_ref());
-                // Empty/self-closing elements: handle like Start but no child tracking
+                // Empty/self-closing elements: handle like Start but no child
+                // tracking.  A self-closing metadata tag (e.g. <dc:creator/>)
+                // still sets the current tag so any following text is
+                // attributed to it; a self-closing item/itemref is parsed here.
                 match section {
+                    Some("metadata") => {
+                        current_meta_tag = Some(name);
+                    }
                     Some("manifest") if name == b"item" => {
                         if let Some(item) = parse_manifest_item(e) {
                             manifest.push(item);
@@ -339,7 +345,7 @@ pub fn parse_nav_toc(
                             link_text.clone()
                         },
                         href: link_href.clone(),
-                        spine_index: 0,
+                        spine_index: None,
                     });
                     in_link = false;
                     link_href.clear();
@@ -441,7 +447,7 @@ pub fn parse_ncx_toc(archive: &mut Archive, ncx_href: &str) -> Result<Vec<TocEnt
                             point_title.clone()
                         },
                         href: point_href.clone(),
-                        spine_index: 0,
+                        spine_index: None,
                     });
                     in_nav_point = false;
                 }
@@ -498,7 +504,9 @@ pub fn resolve_toc_spine_indices(
         } else {
             normalize_epub_path(raw)
         };
-        entry.spine_index = *href_to_spine.get(&resolved).unwrap_or(&0);
+        // Leave unresolved entries as `None` so the UI can skip them
+        // instead of silently jumping to chapter 0.
+        entry.spine_index = href_to_spine.get(&resolved).copied();
     }
 }
 
@@ -514,7 +522,7 @@ pub fn generate_fallback_toc(spine: &[String], manifest: &[ManifestItem]) -> Vec
                 .map(|item| TocEntry {
                     title: format!("Chapter {}", idx + 1),
                     href: item.href.clone(),
-                    spine_index: idx,
+                    spine_index: Some(idx),
                 })
         })
         .collect()
